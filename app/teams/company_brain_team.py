@@ -4,10 +4,14 @@ from agno.agent import Agent
 from agno.team import Team, TeamMode
 
 from app.agents.finance_agent import create_finance_agent
+from app.agents.idea_agent import create_idea_agent
 from app.agents.legal_agent import create_legal_agent
+from app.agents.market_research_agent import create_market_research_agent
 from app.agents.negotiation_agent import create_negotiation_agent
 from app.agents.onboarding_agent import create_onboarding_agent
+from app.agents.refinement_agent import create_refinement_agent
 from app.agents.sales_agent import create_sales_agent
+from app.agents.strategy_agent import create_strategy_agent
 from app.agents.top_agent import create_top_agent
 from app.memory.super_memory import SuperMemory
 from app.providers.gmail_provider import GmailProvider
@@ -26,6 +30,7 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
     Week 1: Top Agent + Sales Agent
     Week 2: + Onboarding Agent + Gmail + Lead Conversion workflow
     Week 3: + Negotiation Agent + Finance Agent + Legal Agent + Pricing workflow + Playbook Memory
+    Week 4: + Idea Agent + Refinement Agent + Market Research Agent + Strategy Agent
     """
     # Create agents
     top_agent = create_top_agent()
@@ -34,6 +39,10 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
     negotiation_agent = create_negotiation_agent()
     finance_agent = create_finance_agent()
     legal_agent = create_legal_agent()
+    idea_agent = create_idea_agent()
+    refinement_agent = create_refinement_agent()
+    market_research_agent = create_market_research_agent()
+    strategy_agent = create_strategy_agent()
 
     # Create providers
     twilio_provider = TwilioProvider()
@@ -80,6 +89,30 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
     legal_agent.tools.extend(memory_provider.get_tools())
     legal_agent.instructions.append(memory_provider.get_instructions())
 
+    # Wire tools into Idea Agent (Memory)
+    idea_agent.tools.extend(memory_provider.get_tools())
+    idea_agent.instructions.append(memory_provider.get_instructions())
+
+    # Wire tools into Refinement Agent (Memory)
+    refinement_agent.tools.extend(memory_provider.get_tools())
+    refinement_agent.instructions.append(memory_provider.get_instructions())
+
+    # Wire tools into Market Research Agent (Web + Memory)
+    market_research_agent.tools.extend(web_provider.get_tools())
+    market_research_agent.tools.extend(memory_provider.get_tools())
+    market_research_agent.instructions.extend([
+        web_provider.get_instructions(),
+        memory_provider.get_instructions(),
+    ])
+
+    # Wire tools into Strategy Agent (Memory + Web)
+    strategy_agent.tools.extend(memory_provider.get_tools())
+    strategy_agent.tools.extend(web_provider.get_tools())
+    strategy_agent.instructions.extend([
+        memory_provider.get_instructions(),
+        web_provider.get_instructions(),
+    ])
+
     # Build the team
     team = Team(
         name="Company Brain",
@@ -91,12 +124,18 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
             negotiation_agent,
             finance_agent,
             legal_agent,
+            idea_agent,
+            refinement_agent,
+            market_research_agent,
+            strategy_agent,
         ],
         instructions=[
             "This is the Company Brain team. The Top Agent (Chief of Staff) coordinates all work.",
             "When a request comes in, the Top Agent decides whether to handle it directly or delegate.",
             "Client Agents are spawned dynamically via the Lead Conversion workflow.",
             "Pricing requests must go through the Negotiation Agent and require owner approval.",
+            "Ideas go through: Idea Agent → (optional) Market Research → Refinement Agent.",
+            "Strategy requests: Market Research Agent + Strategy Agent work together.",
         ],
         markdown=True,
     )
@@ -108,6 +147,10 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
     team._negotiation_agent = negotiation_agent
     team._finance_agent = finance_agent
     team._legal_agent = legal_agent
+    team._idea_agent = idea_agent
+    team._refinement_agent = refinement_agent
+    team._market_research_agent = market_research_agent
+    team._strategy_agent = strategy_agent
     team._lead_conversion = LeadConversionWorkflow(memory=memory)
     team._pricing_request = PricingRequestWorkflow(
         playbook_memory=memory.playbook,
