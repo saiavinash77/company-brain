@@ -6,6 +6,7 @@ from app.memory.local_backend import LocalBackend
 from app.memory.working_memory import WorkingMemory
 from app.memory.client_vault import ClientVault
 from app.memory.audit_memory import AuditMemory
+from app.memory.playbook_memory import PlaybookMemory
 
 
 class SuperMemory:
@@ -33,6 +34,11 @@ class SuperMemory:
         self.backend = backend
         self.working = WorkingMemory(backend)
         self.audit = AuditMemory(backend)
+        self.playbook = PlaybookMemory(backend)
+
+    async def load_playbooks(self):
+        """Load all playbook files into memory. Call once at startup."""
+        return await self.playbook.load_playbooks()
 
     def get_client_vault(self, client_id: str) -> ClientVault:
         """Get an isolated vault for a specific client."""
