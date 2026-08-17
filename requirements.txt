@@ -15,8 +15,8 @@ fastapi>=0.115.0
 uvicorn>=0.32.0
 aiohttp>=3.11.0
 
-# Telnyx WhatsApp
-telnyx>=1.0.0
+# Twilio WhatsApp
+twilio>=9.0.0
 
 # Gmail (Week 2+)
 google-auth>=2.30.0

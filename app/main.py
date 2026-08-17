@@ -9,9 +9,8 @@ from fastapi import FastAPI, Request
 from app.config import (
     AGENTOS_HOST,
     AGENTOS_PORT,
-    TELYNX_API_KEY,
-    TELNYX_NUMBER,
     OWNER_NUMBER,
+    TWILIO_ACCOUNT_SID,
 )
 from app.memory.super_memory import SuperMemory
 from app.teams.company_brain_team import (
@@ -56,45 +55,63 @@ async def list_clients():
 
 @webhook_app.post("/webhook/whatsapp")
 async def whatsapp_webhook(request: Request):
-    """Receive incoming WhatsApp messages from Telnyx and route to Top Agent."""
-    if not TELYNX_API_KEY:
-        return {"error": "Telnyx not configured"}, 503
+    """Receive incoming WhatsApp messages from Twilio and route to Top Agent.
+
+    Twilio sends webhook POST with form data:
+    - From: whatsapp:+1xxxxxxxxxx (sender)
+    - To: whatsapp:+1xxxxxxxxxx (your Twilio number)
+    - Body: message text
+    - NumMedia: count of media attachments
+    - SmsSid: message SID
+    """
+    if not TWILIO_ACCOUNT_SID:
+        return {"error": "Twilio not configured"}, 503
 
     try:
-        payload = await request.json()
-        logger.info(f"Received WhatsApp webhook: {json.dumps(payload, default=str)[:500]}")
+        form = await request.form()
+        logger.info(f"Received Twilio webhook from {form.get('From', 'unknown')}")
 
-        # Extract message text from Telnyx payload
-        data = payload.get("data", {})
-        payload_inner = data.get("payload", {})
-        text = payload_inner.get("text", "")
+        # Validate sender is the owner
+        sender = form.get("From", "")
+        if OWNER_NUMBER and OWNER_NUMBER not in sender:
+            logger.warning(f"Message from unknown sender: {sender}, ignoring")
+            # Return empty TwiML to acknowledge without responding
+            return _empty_twiml()
 
-        # Also check for media content
-        media = payload_inner.get("media", [])
+        # Extract message text
+        text = form.get("Body", "")
+        num_media = int(form.get("NumMedia", 0))
 
-        if not text and not media:
-            logger.warning("No text or media in WhatsApp message")
-            return {"status": "ignored", "reason": "empty message"}
+        if not text and num_media == 0:
+            logger.warning("Empty WhatsApp message received")
+            return _empty_twiml()
 
         # Build the message for the Top Agent
         message_parts = ["[WhatsApp Message from Owner]"]
         if text:
             message_parts.append(text)
-        if media:
-            for m in media:
-                message_parts.append(f"[Media: {m.get('content_type', 'unknown')}]")
+        if num_media > 0:
+            for i in range(num_media):
+                media_url = form.get(f"MediaUrl{i}", "")
+                media_type = form.get(f"MediaContentType{i}", "unknown")
+                message_parts.append(f"[Media: {media_type}]")
 
         full_message = "\n".join(message_parts)
 
-        # Run the Top Agent asynchronously
+        # Run the Top Agent asynchronously (Twilio expects a fast response)
         asyncio.create_task(_process_whatsapp_message(full_message))
 
-        # Telnyx expects a quick response
-        return {"status": "received", "message": "Processing..."}
+        # Return empty TwiML to acknowledge receipt
+        return _empty_twiml()
 
     except Exception as e:
         logger.error(f"WhatsApp webhook error: {e}")
         return {"status": "error", "message": str(e)}, 500
+
+
+def _empty_twiml() -> str:
+    """Return empty TwiML response to acknowledge webhook receipt."""
+    return '<Response></Response>'
 
 
 async def _process_whatsapp_message(message: str):
@@ -111,8 +128,6 @@ async def _process_whatsapp_message(message: str):
 
 def _wire_knowledge_to_client_agents(team):
     """Wire shared knowledge/db into dynamically spawned client agents."""
-    from app.teams.company_brain_team import get_lead_conversion
-
     conversion = get_lead_conversion(team)
     for client_id, agent in conversion.list_client_agents().items():
         if hasattr(team, "knowledge") and team.knowledge and not agent.knowledge:

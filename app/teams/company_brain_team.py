@@ -9,7 +9,7 @@ from app.agents.top_agent import create_top_agent
 from app.memory.super_memory import SuperMemory
 from app.providers.gmail_provider import GmailProvider
 from app.providers.memory_provider import MemoryProvider
-from app.providers.telnyx_provider import TelnyxProvider
+from app.providers.twilio_provider import TwilioProvider
 from app.providers.web_provider import WebProvider
 from app.workflows.lead_conversion_workflow import LeadConversionWorkflow
 
@@ -30,16 +30,16 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
     onboarding_agent = create_onboarding_agent()
 
     # Create providers and wire them into agents
-    telnyx_provider = TelnyxProvider()
+    twilio_provider = TwilioProvider()
     web_provider = WebProvider()
     gmail_provider = GmailProvider()
     memory_provider = MemoryProvider(memory=memory)
 
     # Wire tools into Top Agent
-    top_agent.tools.extend(telnyx_provider.get_tools())
+    top_agent.tools.extend(twilio_provider.get_tools())
     top_agent.tools.extend(memory_provider.get_tools())
     top_agent.instructions.extend([
-        telnyx_provider.get_instructions(),
+        twilio_provider.get_instructions(),
         memory_provider.get_instructions(),
     ])
     if gmail_provider.is_available():

@@ -15,9 +15,10 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "")
 
-# ---- Telnyx WhatsApp ----
-TELYNX_API_KEY = os.environ.get("TELYNX_API_KEY", "")
-TELYNX_NUMBER = os.environ.get("TELYNX_NUMBER", "")
+# ---- Twilio WhatsApp ----
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_PHONE_NUMBER = os.environ.get("TWILIO_PHONE_NUMBER", "")
 OWNER_NUMBER = os.environ.get("OWNER_NUMBER", "")
 
 # ---- Database ----
