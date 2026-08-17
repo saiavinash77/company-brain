@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-08-17",
+  "sops": {
+    "lead_intake": {
+      "name": "Lead Intake Process",
+      "steps": [
+        "1. Receive lead information (email, referral, form, etc.)",
+        "2. Sales Agent scores the lead on Fit, Budget, Timing, Authority (1-10 each)",
+        "3. Calculate overall score and assign verdict (HOT/WARM/COLD)",
+        "4. Draft a personalized first reply",
+        "5. Present to owner for review and approval",
+        "6. Owner approves/modifies the reply",
+        "7. Send the reply and log in the pipeline"
+      ]
+    },
+    "client_onboarding": {
+      "name": "Client Onboarding Process",
+      "steps": [
+        "1. Confirm lead conversion with owner",
+        "2. Create client vault in memory system",
+        "3. Spawn dedicated Client Agent",
+        "4. Run onboarding checklist (kickoff meeting, contract, access, preferences)",
+        "5. Set up communication channels",
+        "6. Store all client information in vault"
+      ]
+    },
+    "pricing_request": {
+      "name": "Pricing Request Process",
+      "steps": [
+        "1. Client Agent receives pricing request",
+        "2. Negotiation Agent reviews rate card and client context",
+        "3. Generate 3 pricing options with trade-offs",
+        "4. Present options to owner with recommendation",
+        "5. Owner selects or modifies pricing",
+        "6. Send final pricing to client via Client Agent"
+      ]
+    }
+  }
+}

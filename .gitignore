@@ -22,9 +22,8 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Data (keep structure, ignore content)
-data/playbooks/*.json
-!data/playbooks/.gitkeep
+# Data (ignore user-specific data files)
+# data/playbooks/*.json  -- uncomment to ignore playbook templates
 
 # Docker
 pgdata/

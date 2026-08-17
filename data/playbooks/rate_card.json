@@ -1,0 +1,85 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-08-17",
+  "currency": "USD",
+  "services": [
+    {
+      "id": "social_media_management",
+      "name": "Social Media Management",
+      "description": "Full social media strategy, content creation, scheduling, and analytics",
+      "tiers": [
+        {
+          "name": "Starter",
+          "monthly_rate": 500,
+          "includes": ["2 platforms", "8 posts/month", "basic analytics"],
+          "margin_min": 0.40
+        },
+        {
+          "name": "Growth",
+          "monthly_rate": 1200,
+          "includes": ["4 platforms", "20 posts/month", "analytics dashboard", "engagement management"],
+          "margin_min": 0.45
+        },
+        {
+          "name": "Premium",
+          "monthly_rate": 2500,
+          "includes": ["6 platforms", "40 posts/month", "advanced analytics", "community management", "paid ad strategy"],
+          "margin_min": 0.50
+        }
+      ]
+    },
+    {
+      "id": "content_creation",
+      "name": "Content Creation",
+      "description": "Blog posts, articles, case studies, and long-form content",
+      "tiers": [
+        {
+          "name": "Basic",
+          "per_piece_rate": 150,
+          "includes": ["500-800 words", "1 revision"],
+          "margin_min": 0.35
+        },
+        {
+          "name": "Standard",
+          "per_piece_rate": 300,
+          "includes": ["1000-1500 words", "SEO optimization", "2 revisions"],
+          "margin_min": 0.40
+        },
+        {
+          "name": "Premium",
+          "per_piece_rate": 500,
+          "includes": ["2000+ words", "SEO + research", "unlimited revisions", "distribution strategy"],
+          "margin_min": 0.45
+        }
+      ]
+    },
+    {
+      "id": "brand_strategy",
+      "name": "Brand Strategy",
+      "description": "Brand positioning, identity development, and strategic planning",
+      "tiers": [
+        {
+          "name": "Brand Audit",
+          "project_rate": 2000,
+          "includes": ["Current brand assessment", "competitive analysis", "recommendations report"],
+          "margin_min": 0.50
+        },
+        {
+          "name": "Full Brand Build",
+          "project_rate": 5000,
+          "includes": ["Brand audit", "logo design", "brand guidelines", "messaging framework", "visual identity"],
+          "margin_min": 0.55
+        }
+      ]
+    }
+  ],
+  "discount_policy": {
+    "max_discount_percent": 15,
+    "volume_discount": {
+      "3_months": 5,
+      "6_months": 10,
+      "12_months": 15
+    },
+    "requires_owner_approval": true
+  }
+}
