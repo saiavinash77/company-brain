@@ -14,7 +14,11 @@ from app.config import (
     OWNER_NUMBER,
 )
 from app.memory.super_memory import SuperMemory
-from app.teams.company_brain_team import build_company_brain_team, get_top_agent
+from app.teams.company_brain_team import (
+    build_company_brain_team,
+    get_lead_conversion,
+    get_top_agent,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,6 +39,19 @@ top_agent = get_top_agent(team)
 @webhook_app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "company-brain"}
+
+
+@webhook_app.get("/api/clients")
+async def list_clients():
+    """List all active client agents and their IDs."""
+    conversion = get_lead_conversion(team)
+    clients = conversion.list_client_agents()
+    return {
+        "clients": [
+            {"client_id": cid, "agent_name": agent.name}
+            for cid, agent in clients.items()
+        ]
+    }
 
 
 @webhook_app.post("/webhook/whatsapp")
@@ -92,6 +109,19 @@ async def _process_whatsapp_message(message: str):
         logger.error(f"Error processing WhatsApp message: {e}")
 
 
+def _wire_knowledge_to_client_agents(team):
+    """Wire shared knowledge/db into dynamically spawned client agents."""
+    from app.teams.company_brain_team import get_lead_conversion
+
+    conversion = get_lead_conversion(team)
+    for client_id, agent in conversion.list_client_agents().items():
+        if hasattr(team, "knowledge") and team.knowledge and not agent.knowledge:
+            agent.knowledge = team.knowledge
+        if hasattr(team, "db") and team.db and not agent.db:
+            agent.db = team.db
+        logger.info(f"Wired knowledge/db to Client Agent: {agent.name}")
+
+
 def serve():
     """Start the Company Brain via AgentOS with webhook support."""
     from agno.db.postgres import PostgresDb
@@ -116,12 +146,15 @@ def serve():
         ),
     )
 
-    # Wire knowledge into agents
+    # Wire knowledge into team and all members
     team.knowledge = knowledge
     team.db = db
     for member in team.members:
         member.knowledge = knowledge
         member.db = db
+
+    # Wire knowledge into any pre-spawned client agents
+    _wire_knowledge_to_client_agents(team)
 
     # Start AgentOS (this blocks and serves the API + web UI)
     os = AgentOS(
@@ -132,6 +165,7 @@ def serve():
 
     logger.info(f"Company Brain starting on {AGENTOS_HOST}:{AGENTOS_PORT}")
     logger.info("AgentOS Web UI will be available at http://localhost:8000")
+    logger.info(f"Active agents: {[m.name for m in team.members]}")
 
     os.serve()
 

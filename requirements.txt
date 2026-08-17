@@ -19,6 +19,7 @@ aiohttp>=3.11.0
 telnyx>=1.0.0
 
 # Gmail (Week 2+)
+google-auth>=2.30.0
 google-auth-oauthlib>=1.2.0
 google-api-python-client>=2.150.0
 

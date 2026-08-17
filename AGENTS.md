@@ -18,19 +18,23 @@ Agents never talk to each other directly — they write to SuperMemory.
 | Top Agent | Gemini Pro | Orchestrator. Routes everything, collects status, escalates to owner |
 | Sales Agent | Groq Llama 3.3 70B | Qualify leads, score, draft first replies, manage pipeline |
 
-### Agent Roster (Full — Weeks 2-5)
+### Agent Roster (Week 2 — Client System + Email)
 | Agent | Model | Role |
 |-------|-------|------|
-| Top Agent | Gemini Pro | Orchestrator |
+| Top Agent | Gemini Pro | Orchestrator. Now also delegates to Onboarding Agent, manages Client Agents |
 | Sales Agent | Groq Llama 3.3 70B | Lead qualification & scoring |
-| Client Agent | Gemini Flash | Per-client relationship owner |
+| Onboarding Agent | Gemini Flash | New client setup checklist, credential gathering, vault population |
+| Client Agent | Gemini Flash | Per-client dedicated agent, spawned dynamically on lead conversion |
+
+### Agent Roster (Week 3+ — Planned)
+| Agent | Model | Role |
+|-------|-------|------|
 | Negotiation Agent | Gemini Pro | Pricing & deal structuring |
 | Finance Agent | Groq Llama 3.3 70B | Invoices & payments |
 | Legal Agent | Mistral Large | Contract review |
 | Idea Agent | Gemini Flash | Capture raw ideas |
 | Refinement Agent | Mistral Large | Turn ideas into briefs |
 | Market Research Agent | Groq Llama 3.3 70B | Competitor & trend research |
-| Onboarding Agent | Gemini Flash | New client setup |
 | Briefing Agent | Groq Llama 3.3 70B | Daily/weekly summaries |
 | Strategy Agent | Gemini Pro | Campaign thinking |
 
@@ -53,6 +57,11 @@ Each data source is wrapped in a Provider class with:
 - `MemoryBackend` (abstract) → `LocalBackend` (SQLite) or `GCPBackend` (Firestore/BigQuery)
 - Swap via `MEMORY_BACKEND=local|gcp` environment variable
 - No code changes needed when migrating to GCP
+
+### Workflows
+- **Lead Conversion** — Lead → create client vault → spawn Client Agent → trigger Onboarding Agent
+- **Daily Briefing** (Week 5) — Scheduled morning summary
+- **Pricing Request** (Week 3) — 3 pricing options → owner approval → send
 
 ## Project Structure
 ```
