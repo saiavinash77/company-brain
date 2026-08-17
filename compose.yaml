@@ -1,0 +1,39 @@
+services:
+  # PostgreSQL + PgVector database
+  company-brain-db:
+    image: agnohq/pgvector:18
+    container_name: company-brain-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: scout
+      POSTGRES_PASSWORD: scout
+      POSTGRES_DB: companybrain
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scout -d companybrain"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Company Brain application
+  company-brain-app:
+    build: .
+    container_name: company-brain-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    depends_on:
+      company-brain-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://scout:scout@company-brain-db:5432/companybrain
+
+volumes:
+  pgdata:
