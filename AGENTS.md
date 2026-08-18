@@ -15,13 +15,13 @@ Agents never talk to each other directly — they write to SuperMemory.
 ### Agent Roster (Week 1 — Foundation)
 | Agent | Model | Role |
 |-------|-------|------|
-| Top Agent | Gemini Pro | Orchestrator. Routes everything, collects status, escalates to owner |
+| Top Agent | Groq GPT-OSS 120B by default | Orchestrator. Routes everything, collects status, escalates to owner |
 | Sales Agent | Groq GPT-OSS 120B | Qualify leads, score, draft first replies, manage pipeline |
 
 ### Agent Roster (Week 2 — Client System + Email)
 | Agent | Model | Role |
 |-------|-------|------|
-| Top Agent | Gemini Pro | Orchestrator. Now also delegates to Onboarding Agent, manages Client Agents |
+| Top Agent | Groq GPT-OSS 120B by default | Orchestrator. Now also delegates to Onboarding Agent, manages Client Agents |
 | Sales Agent | Groq GPT-OSS 120B | Lead qualification & scoring |
 | Onboarding Agent | Gemini Flash | New client setup checklist, credential gathering, vault population |
 | Client Agent | Gemini Flash | Per-client dedicated agent, spawned dynamically on lead conversion |
@@ -95,6 +95,7 @@ docker compose up -d --build
 ### Key Environment Variables
 - `GROQ_API_KEY` — Groq API key
 - `GROQ_MODEL` — Groq model ID (defaults to `openai/gpt-oss-120b`)
+- `TOP_AGENT_PROVIDER` — `groq` by default; set to `google` to use Gemini for the Top Agent
 - `GOOGLE_API_KEY` — Gemini API (Flash/Pro)
 - `MISTRAL_API_KEY` — Mistral API
 - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` — Twilio WhatsApp API

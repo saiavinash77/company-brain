@@ -13,6 +13,7 @@ PLAYBOOKS_DIR = DATA_DIR / "playbooks"
 # ---- LLM API Keys ----
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+TOP_AGENT_PROVIDER = os.environ.get("TOP_AGENT_PROVIDER", "groq").lower()
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "")
 

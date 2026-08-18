@@ -1,6 +1,8 @@
 from agno.agent import Agent
 
+from app.config import TOP_AGENT_PROVIDER
 from app.models.gemini_model import get_gemini_pro
+from app.models.groq_model import get_groq_llama
 
 
 TOP_AGENT_INSTRUCTIONS = [
@@ -80,12 +82,23 @@ TOP_AGENT_INSTRUCTIONS = [
 ]
 
 
+def _get_top_agent_model():
+    if TOP_AGENT_PROVIDER == "groq":
+        return get_groq_llama()
+    if TOP_AGENT_PROVIDER == "google":
+        return get_gemini_pro()
+    raise ValueError(
+        "TOP_AGENT_PROVIDER must be 'groq' or 'google'. "
+        f"Received: {TOP_AGENT_PROVIDER!r}"
+    )
+
+
 def create_top_agent() -> Agent:
     """Create the Top Agent (Chief of Staff) orchestrator."""
     return Agent(
         name="Top Agent",
         role="Chief of Staff — orchestrates all agents and is the owner's single point of contact",
-        model=get_gemini_pro(),
+        model=_get_top_agent_model(),
         instructions=TOP_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         add_memories_to_context=True,

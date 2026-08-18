@@ -168,9 +168,10 @@ At minimum, configure one LLM provider:
 GOOGLE_API_KEY=your_key_here
 GROQ_API_KEY=your_key_here
 MISTRAL_API_KEY=your_key_here
+TOP_AGENT_PROVIDER=groq
 ```
 
-Configure Twilio, Gmail, and other providers only when you want to exercise those integrations.
+`TOP_AGENT_PROVIDER=groq` is the reliable local default. Set it to `google` when Gemini streaming is available on your network. Configure Twilio, Gmail, and other providers only when you want to exercise those integrations.
 
 ### 2. Start the complete stack
 
