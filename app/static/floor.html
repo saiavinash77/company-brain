@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Company Brain | Agent Floor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #11131b;
+      --panel: #1b1f2b;
+      --panel-2: #242a39;
+      --line: #394257;
+      --text: #f5f7fb;
+      --muted: #aab3c7;
+      --accent: #f0b429;
+      --green: #45d483;
+      --blue: #67b7ff;
+      --purple: #c49bff;
+      --danger: #ff7e8b;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 20% 0%, #28324b 0, transparent 35%), var(--bg);
+      color: var(--text);
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 9px 13px;
+      color: var(--text);
+      background: var(--panel-2);
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover { border-color: var(--accent); }
+
+    .shell { max-width: 1440px; margin: 0 auto; padding: 24px; }
+    .topbar, .panel-header, .agent-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .eyebrow { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { margin-top: 5px; font-size: clamp(25px, 4vw, 42px); letter-spacing: -.04em; }
+    h2 { font-size: 18px; }
+    h3 { font-size: 14px; }
+    .subtitle { max-width: 680px; margin-top: 8px; color: var(--muted); }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .primary { border-color: #c69317; background: var(--accent); color: #19140a; font-weight: 700; }
+    .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px var(--green); }
+    .dot.offline { background: var(--danger); box-shadow: 0 0 12px var(--danger); }
+
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 28px 0 16px; }
+    .metric, .panel { border: 1px solid var(--line); border-radius: 16px; background: rgba(27, 31, 43, .86); box-shadow: 0 18px 50px rgba(0, 0, 0, .18); }
+    .metric { padding: 16px; }
+    .metric-value { display: block; margin-top: 5px; font-size: 26px; font-weight: 750; }
+    .metric-label { color: var(--muted); font-size: 12px; }
+
+    .layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, .75fr); gap: 16px; }
+    .panel { padding: 18px; }
+    .panel-header { margin-bottom: 16px; }
+    .panel-header span { color: var(--muted); font-size: 12px; }
+    .agents { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 11px; }
+    .agent { position: relative; min-height: 142px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(145deg, rgba(36,42,57,.95), rgba(24,28,39,.95)); overflow: hidden; }
+    .agent::after { content: ""; position: absolute; right: -22px; bottom: -30px; width: 90px; height: 90px; border-radius: 50%; background: var(--agent-color, var(--blue)); opacity: .1; }
+    .avatar { display: grid; place-items: center; width: 38px; height: 38px; margin-bottom: 11px; border-radius: 12px; background: var(--agent-color, var(--blue)); color: #11131b; font-weight: 800; }
+    .agent-role { min-height: 36px; margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .agent-status { display: inline-flex; align-items: center; gap: 6px; margin-top: 11px; color: var(--green); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+    .agent-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+    .feed { display: grid; gap: 10px; max-height: 500px; overflow: auto; }
+    .feed-item { padding: 12px; border-left: 3px solid var(--blue); border-radius: 8px; background: var(--panel-2); }
+    .feed-item strong { display: block; }
+    .feed-item small { color: var(--muted); }
+    .client-list { display: grid; gap: 9px; }
+    .client { display: flex; justify-content: space-between; gap: 12px; padding: 11px 12px; border-radius: 10px; background: var(--panel-2); }
+    .client small { color: var(--muted); }
+    .empty { color: var(--muted); }
+    .footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
+
+    @media (max-width: 850px) {
+      .summary { grid-template-columns: repeat(2, 1fr); }
+      .layout { grid-template-columns: 1fr; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+    }
+    @media (max-width: 460px) {
+      .shell { padding: 15px; }
+      .summary { gap: 8px; }
+      .metric { padding: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Company Brain · Agent Floor</div>
+        <h1>See the team at work</h1>
+        <p class="subtitle">A visual view of the agents, workflows, clients, and activity behind the Company Brain. AgentOS remains the source of truth.</p>
+      </div>
+      <div class="actions">
+        <a href="/"><button>Back to AgentOS</button></a>
+        <button class="primary" id="refresh">Refresh floor</button>
+      </div>
+    </header>
+
+    <section class="summary" aria-label="Company Brain summary">
+      <div class="metric"><span class="metric-label">Agents</span><strong class="metric-value" id="agent-count">—</strong></div>
+      <div class="metric"><span class="metric-label">Active clients</span><strong class="metric-value" id="client-count">—</strong></div>
+      <div class="metric"><span class="metric-label">Workflows</span><strong class="metric-value">3</strong></div>
+      <div class="metric"><span class="metric-label">Connection</span><strong class="metric-value status"><i class="dot" id="connection-dot"></i><span id="connection">Connecting</span></strong></div>
+    </section>
+
+    <section class="layout">
+      <div class="panel">
+        <div class="panel-header"><h2>Agent floor</h2><span id="updated">Waiting for AgentOS</span></div>
+        <div class="agents" id="agents"><p class="empty">Loading agents…</p></div>
+      </div>
+      <aside class="panel">
+        <div class="panel-header"><h2>Client agents</h2><span id="client-label">0 active</span></div>
+        <div class="client-list" id="clients"><p class="empty">No client agents spawned yet.</p></div>
+      </aside>
+    </section>
+
+    <section class="panel" style="margin-top:16px">
+      <div class="panel-header"><h2>Activity stream</h2><span>Live floor state</span></div>
+      <div class="feed" id="feed"><div class="feed-item"><strong>Floor is starting</strong><small>Waiting for the first AgentOS state update.</small></div></div>
+    </section>
+    <p class="footer">This interface is a Company Brain presentation layer. AgentOS owns execution, sessions, memory, and workflows.</p>
+  </main>
+  <script>
+    const colors = ['#67b7ff', '#f0b429', '#45d483', '#c49bff', '#ff9b72'];
+    const state = { previous: null };
+    const $ = (id) => document.getElementById(id);
+    const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
+
+    function render(data) {
+      const agents = data.agents || [];
+      const clients = data.clients || [];
+      $('agent-count').textContent = agents.length;
+      $('client-count').textContent = clients.length;
+      $('client-label').textContent = `${clients.length} active`;
+      $('connection').textContent = 'Connected';
+      $('connection-dot').classList.remove('offline');
+      $('updated').textContent = `Updated ${new Date(data.generated_at).toLocaleTimeString()}`;
+
+      $('agents').innerHTML = agents.map((agent, index) => {
+        const initials = esc((agent.name || 'A').split(/\\s+/).map((part) => part[0]).join('').slice(0, 2));
+        return `<article class="agent" style="--agent-color:${colors[index % colors.length]}">
+          <div class="avatar">${initials}</div>
+          <h3>${esc(agent.name)}</h3>
+          <p class="agent-role">${esc(agent.role || 'Company Brain specialist')}</p>
+          <span class="agent-status">${esc(agent.status || 'ready')}</span>
+        </article>`;
+      }).join('') || '<p class="empty">No agents registered.</p>';
+
+      $('clients').innerHTML = clients.map((client) => `<div class="client"><span>${esc(client.name)}</span><small>${esc(client.status)}</small></div>`).join('') || '<p class="empty">No client agents spawned yet.</p>';
+
+      if (state.previous) {
+        const oldAgents = new Set((state.previous.agents || []).map((agent) => agent.name));
+        const newAgents = agents.filter((agent) => !oldAgents.has(agent.name));
+        if (newAgents.length) addFeed(`New agent joined: ${newAgents.map((agent) => agent.name).join(', ')}`, 'Dynamic client roster updated');
+      }
+      state.previous = data;
+    }
+
+    function addFeed(title, detail) {
+      const item = document.createElement('div');
+      item.className = 'feed-item';
+      item.innerHTML = `<strong>${esc(title)}</strong><small>${esc(detail)}</small>`;
+      $('feed').prepend(item);
+      while ($('feed').children.length > 12) $('feed').lastElementChild.remove();
+    }
+
+    async function loadState() {
+      try {
+        const response = await fetch('/api/floor/state', { headers: { Accept: 'application/json' } });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        render(await response.json());
+      } catch (error) {
+        $('connection').textContent = 'Offline';
+        $('connection-dot').classList.add('offline');
+        addFeed('Floor connection failed', error.message);
+      }
+    }
+
+    $('refresh').addEventListener('click', loadState);
+    loadState();
+    if (window.EventSource) {
+      const events = new EventSource('/api/floor/events');
+      events.addEventListener('floor_state', (event) => render(JSON.parse(event.data)));
+      events.onerror = () => {
+        $('connection').textContent = 'Reconnecting';
+        $('connection-dot').classList.add('offline');
+      };
+    }
+  </script>
+</body>
+</html>

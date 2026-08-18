@@ -35,5 +35,16 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://scout:scout@company-brain-db:5432/companybrain
 
+  # Self-hosted AgentOS chat UI. It connects from the browser to the
+  # Company Brain API on port 8000.
+  agent-ui:
+    build: ./frontend/agent-ui
+    container_name: company-brain-agent-ui
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - company-brain-app
+
 volumes:
   pgdata:

@@ -2,9 +2,18 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 
 from app.config import (
     AGENTOS_HOST,
@@ -26,8 +35,11 @@ logging.basicConfig(
 logger = logging.getLogger("company-brain")
 
 
-# FastAPI app for webhook endpoints
-webhook_app = FastAPI(title="Company Brain Webhooks")
+# FastAPI app for Company Brain routes. AgentOS mounts its own API and UI
+# onto this app during startup.
+webhook_app = FastAPI(title="Company Brain")
+FLOOR_PAGE = Path(__file__).parent / "static" / "floor.html"
+application = None
 
 # Build the team (stores references for webhook access)
 memory = SuperMemory()
@@ -38,6 +50,83 @@ top_agent = get_top_agent(team)
 @webhook_app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "company-brain"}
+
+
+@webhook_app.get("/floor", response_class=HTMLResponse)
+async def agent_floor():
+    """Serve the visual Agent Floor presentation layer."""
+    return FileResponse(FLOOR_PAGE, media_type="text/html")
+
+
+def _slug(value: str) -> str:
+    return "-".join(value.lower().split())
+
+
+def _floor_state() -> dict:
+    """Return a read-only snapshot for the Agent Floor UI.
+
+    AgentOS remains the execution source of truth. This endpoint only exposes
+    presentation metadata and the dynamically spawned client roster.
+    """
+    agents = []
+    for member in team.members:
+        name = str(getattr(member, "name", "Agent"))
+        agents.append(
+            {
+                "id": str(getattr(member, "id", None) or _slug(name)),
+                "name": name,
+                "role": str(getattr(member, "role", "Company Brain specialist")),
+                "status": "ready",
+            }
+        )
+
+    conversion = get_lead_conversion(team)
+    clients = [
+        {
+            "id": client_id,
+            "name": str(getattr(agent, "name", client_id)),
+            "status": "active",
+        }
+        for client_id, agent in conversion.list_client_agents().items()
+    ]
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "agents": agents,
+        "clients": clients,
+        "workflows": [
+            "lead-conversion",
+            "pricing-request",
+            "daily-briefing",
+        ],
+    }
+
+
+@webhook_app.get("/api/floor/state")
+async def floor_state():
+    """Return the current Company Brain roster for external visual clients."""
+    return _floor_state()
+
+
+async def _floor_event_stream(request: Request):
+    """Send periodic snapshots until the browser disconnects."""
+    while not await request.is_disconnected():
+        yield f"event: floor_state\ndata: {json.dumps(_floor_state())}\n\n"
+        await asyncio.sleep(5)
+
+
+@webhook_app.get("/api/floor/events")
+async def floor_events(request: Request):
+    """Stream floor snapshots to browser clients over Server-Sent Events."""
+    return StreamingResponse(
+        _floor_event_stream(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @webhook_app.get("/api/clients")
@@ -65,7 +154,7 @@ async def whatsapp_webhook(request: Request):
     - SmsSid: message SID
     """
     if not TWILIO_ACCOUNT_SID:
-        return {"error": "Twilio not configured"}, 503
+        return JSONResponse({"error": "Twilio not configured"}, status_code=503)
 
     try:
         form = await request.form()
@@ -76,7 +165,7 @@ async def whatsapp_webhook(request: Request):
         if OWNER_NUMBER and OWNER_NUMBER not in sender:
             logger.warning(f"Message from unknown sender: {sender}, ignoring")
             # Return empty TwiML to acknowledge without responding
-            return _empty_twiml()
+            return Response(content=_empty_twiml(), media_type="application/xml")
 
         # Extract message text
         text = form.get("Body", "")
@@ -84,7 +173,7 @@ async def whatsapp_webhook(request: Request):
 
         if not text and num_media == 0:
             logger.warning("Empty WhatsApp message received")
-            return _empty_twiml()
+            return Response(content=_empty_twiml(), media_type="application/xml")
 
         # Build the message for the Top Agent
         message_parts = ["[WhatsApp Message from Owner]"]
@@ -92,7 +181,6 @@ async def whatsapp_webhook(request: Request):
             message_parts.append(text)
         if num_media > 0:
             for i in range(num_media):
-                media_url = form.get(f"MediaUrl{i}", "")
                 media_type = form.get(f"MediaContentType{i}", "unknown")
                 message_parts.append(f"[Media: {media_type}]")
 
@@ -102,11 +190,11 @@ async def whatsapp_webhook(request: Request):
         asyncio.create_task(_process_whatsapp_message(full_message))
 
         # Return empty TwiML to acknowledge receipt
-        return _empty_twiml()
+        return Response(content=_empty_twiml(), media_type="application/xml")
 
     except Exception as e:
         logger.error(f"WhatsApp webhook error: {e}")
-        return {"status": "error", "message": str(e)}, 500
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
 def _empty_twiml() -> str:
@@ -171,23 +259,35 @@ def serve():
     # Wire knowledge into any pre-spawned client agents
     _wire_knowledge_to_client_agents(team)
 
-    # Start AgentOS (this blocks and serves the API + web UI)
-    os = AgentOS(
-        name="company-brain",
-        agents=[team],
+    # Mount AgentOS onto the existing FastAPI app so its UI/API and the
+    # Company Brain routes share one server and one origin.
+    agent_os = AgentOS(
+        id="company-brain",
+        name="Company Brain",
+        description="Business operations team with visual Agent Floor support.",
+        agents=list(team.members),
+        teams=[team],
         db=db,
+        base_app=webhook_app,
+        on_route_conflict="preserve_base_app",
+        cors_allowed_origins=[
+            "http://localhost:3000",
+            "http://localhost:3001",
+            f"http://localhost:{AGENTOS_PORT}",
+        ],
+        tracing=True,
     )
 
+    global application
+    application = agent_os.get_app()
+
     logger.info(f"Company Brain starting on {AGENTOS_HOST}:{AGENTOS_PORT}")
-    logger.info("AgentOS Web UI will be available at http://localhost:8000")
+    logger.info("AgentOS API will be available at http://localhost:8000")
+    logger.info("Agent UI will be available at http://localhost:3000")
+    logger.info("Agent Floor will be available at http://localhost:8000/floor")
     logger.info(f"Active agents: {[m.name for m in team.members]}")
 
-    os.serve()
-
-    # NOTE: AgentOS serves its own FastAPI app internally.
-    # For the WhatsApp webhook, run the webhook_app separately:
-    #   uvicorn app.main:webhook_app --host 0.0.0.0 --port 8001
-    # Or integrate the webhook routes into AgentOS's FastAPI app (advanced).
+    agent_os.serve(application, host=AGENTOS_HOST, port=AGENTOS_PORT)
 
 
 def serve_webhook_only():

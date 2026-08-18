@@ -1,0 +1,4 @@
+allowBuilds:
+  sharp: true
+overrides:
+  picomatch: ">=2.3.2"

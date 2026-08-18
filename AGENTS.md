@@ -73,9 +73,12 @@ app/
 ├── teams/               # Team compositions
 ├── workflows/           # Deterministic multi-step workflows
 ├── memory/              # SuperMemory system
-├── providers/           # Context providers (Telnyx, Gmail, Web, Memory)
+├── providers/           # Context providers (Twilio, Gmail, Web, Memory)
+├── static/              # Agent Floor presentation page
 data/playbooks/          # Rate cards, SOPs
 ```
+
+The self-hosted Agent UI lives in `frontend/agent-ui/`. It is the main browser surface and connects to the AgentOS API on port 8000. The Agent Floor is opened from its sidebar button at `/floor`.
 
 ## Development
 
@@ -84,14 +87,16 @@ data/playbooks/          # Rate cards, SOPs
 cp example.env .env
 # Fill in your API keys
 docker compose up -d --build
-# Open http://localhost:8000 for AgentOS Web UI
+# Agent UI: http://localhost:3000
+# AgentOS API/docs: http://localhost:8000/docs
+# Agent Floor: http://localhost:8000/floor
 ```
 
 ### Key Environment Variables
 - `GROQ_API_KEY` — Groq API (Llama 3.3 70B)
 - `GOOGLE_API_KEY` — Gemini API (Flash/Pro)
 - `MISTRAL_API_KEY` — Mistral API
-- `TELYNX_API_KEY` — Telnyx WhatsApp API
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` — Twilio WhatsApp API
 - `DATABASE_URL` — PostgreSQL connection
 
 ## Non-Negotiables
