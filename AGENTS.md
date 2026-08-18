@@ -16,13 +16,13 @@ Agents never talk to each other directly — they write to SuperMemory.
 | Agent | Model | Role |
 |-------|-------|------|
 | Top Agent | Gemini Pro | Orchestrator. Routes everything, collects status, escalates to owner |
-| Sales Agent | Groq Llama 3.3 70B | Qualify leads, score, draft first replies, manage pipeline |
+| Sales Agent | Groq GPT-OSS 120B | Qualify leads, score, draft first replies, manage pipeline |
 
 ### Agent Roster (Week 2 — Client System + Email)
 | Agent | Model | Role |
 |-------|-------|------|
 | Top Agent | Gemini Pro | Orchestrator. Now also delegates to Onboarding Agent, manages Client Agents |
-| Sales Agent | Groq Llama 3.3 70B | Lead qualification & scoring |
+| Sales Agent | Groq GPT-OSS 120B | Lead qualification & scoring |
 | Onboarding Agent | Gemini Flash | New client setup checklist, credential gathering, vault population |
 | Client Agent | Gemini Flash | Per-client dedicated agent, spawned dynamically on lead conversion |
 
@@ -30,12 +30,12 @@ Agents never talk to each other directly — they write to SuperMemory.
 | Agent | Model | Role |
 |-------|-------|------|
 | Negotiation Agent | Gemini Pro | Pricing & deal structuring |
-| Finance Agent | Groq Llama 3.3 70B | Invoices & payments |
+| Finance Agent | Groq GPT-OSS 120B | Invoices & payments |
 | Legal Agent | Mistral Large | Contract review |
 | Idea Agent | Gemini Flash | Capture raw ideas |
 | Refinement Agent | Mistral Large | Turn ideas into briefs |
-| Market Research Agent | Groq Llama 3.3 70B | Competitor & trend research |
-| Briefing Agent | Groq Llama 3.3 70B | Daily/weekly summaries |
+| Market Research Agent | Groq GPT-OSS 120B | Competitor & trend research |
+| Briefing Agent | Groq GPT-OSS 120B | Daily/weekly summaries |
 | Strategy Agent | Gemini Pro | Campaign thinking |
 
 ## SuperMemory (5 Layers)
@@ -93,7 +93,8 @@ docker compose up -d --build
 ```
 
 ### Key Environment Variables
-- `GROQ_API_KEY` — Groq API (Llama 3.3 70B)
+- `GROQ_API_KEY` — Groq API key
+- `GROQ_MODEL` — Groq model ID (defaults to `openai/gpt-oss-120b`)
 - `GOOGLE_API_KEY` — Gemini API (Flash/Pro)
 - `MISTRAL_API_KEY` — Mistral API
 - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` — Twilio WhatsApp API
