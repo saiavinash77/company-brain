@@ -7,6 +7,7 @@ from app.memory.working_memory import WorkingMemory
 from app.memory.client_vault import ClientVault
 from app.memory.audit_memory import AuditMemory
 from app.memory.playbook_memory import PlaybookMemory
+from app.memory.semantic_memory import SemanticMemory
 
 
 class SuperMemory:
@@ -35,6 +36,7 @@ class SuperMemory:
         self.working = WorkingMemory(backend)
         self.audit = AuditMemory(backend)
         self.playbook = PlaybookMemory(backend)
+        self.semantic = SemanticMemory(backend)
 
     async def load_playbooks(self):
         """Load all playbook files into memory. Call once at startup."""
