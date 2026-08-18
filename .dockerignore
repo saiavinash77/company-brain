@@ -1,0 +1,24 @@
+# Git and local environment
+.git
+.env
+
+# Python local artifacts
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Frontend artifacts are built by the agent-ui image separately
+frontend/agent-ui/node_modules
+frontend/agent-ui/.next
+frontend/agent-ui/out
+frontend/agent-ui/.pnpm-store
+frontend/agent-ui/coverage
+
+# Local runtime artifacts
+data/*.db
+data/*.sqlite
+data/*.sqlite3
