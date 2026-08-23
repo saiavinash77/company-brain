@@ -190,6 +190,18 @@ def serve():
         agent_os_app.router.routes.append(route)
     logger.info("WhatsApp webhook mounted at /webhook/whatsapp on the AgentOS app")
 
+    # Office Floor UI — Munder-Difflin-style visualization adapted to our
+    # architecture (11 specialists + Top Agent cabin, real delegation events).
+    from fastapi.responses import HTMLResponse
+
+    from app.floor import FLOOR_PAGE
+
+    @agent_os_app.get("/floor", include_in_schema=False)
+    async def floor_page() -> HTMLResponse:
+        return HTMLResponse(FLOOR_PAGE)
+
+    logger.info("Office Floor UI available at /floor")
+
     logger.info(f"Company Brain starting on {AGENTOS_HOST}:{AGENTOS_PORT}")
     logger.info("AgentOS Web UI will be available at http://localhost:8000")
     logger.info(f"Active agents: {[m.name for m in team.members]}")
