@@ -178,16 +178,26 @@ def serve():
         db=db,
     )
 
+    # Mount the WhatsApp webhook routes onto AgentOS's FastAPI app,
+    # so a single port serves both the UI/API and the webhook.
+    agent_os_app = os.get_app()
+    for route in webhook_app.routes:
+        if hasattr(route, "methods") and any(
+            agent_os_app.routes and getattr(r, "path", None) == route.path
+            for r in agent_os_app.routes
+        ):
+            continue  # avoid duplicate paths (e.g. /health)
+        agent_os_app.router.routes.append(route)
+    logger.info("WhatsApp webhook mounted at /webhook/whatsapp on the AgentOS app")
+
     logger.info(f"Company Brain starting on {AGENTOS_HOST}:{AGENTOS_PORT}")
     logger.info("AgentOS Web UI will be available at http://localhost:8000")
     logger.info(f"Active agents: {[m.name for m in team.members]}")
 
     os.serve()
 
-    # NOTE: AgentOS serves its own FastAPI app internally.
-    # For the WhatsApp webhook, run the webhook_app separately:
-    #   uvicorn app.main:webhook_app --host 0.0.0.0 --port 8001
-    # Or integrate the webhook routes into AgentOS's FastAPI app (advanced).
+    # NOTE: The WhatsApp webhook is now served by the same process/port —
+    # no second uvicorn server needed.
 
 
 def serve_webhook_only():
