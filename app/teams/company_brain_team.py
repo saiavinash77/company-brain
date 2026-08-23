@@ -15,6 +15,7 @@ from app.agents.strategy_agent import create_strategy_agent
 from app.agents.top_agent import create_top_agent
 from app.agents.briefing_agent import create_briefing_agent
 from app.memory.super_memory import SuperMemory
+from app.models.gemini_model import get_gemini_flash
 from app.providers.gmail_provider import GmailProvider
 from app.providers.memory_provider import MemoryProvider
 from app.providers.twilio_provider import TwilioProvider
@@ -124,6 +125,8 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
     # Build the team
     team = Team(
         name="Company Brain",
+        id="company-brain",
+        model=get_gemini_flash(),
         mode=TeamMode.coordinate,
         members=[
             top_agent,

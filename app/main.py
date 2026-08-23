@@ -142,7 +142,7 @@ def serve():
     from agno.db.postgres import PostgresDb
     from agno.knowledge import Knowledge
     from agno.vectordb.pgvector import PgVector
-    from agno.os import AgentOS
+    from agno.os import AgentOS as AgnoAgentOS  # alias: plain "os" would shadow the os module
 
     logger.info("Initializing Company Brain...")
 
@@ -172,15 +172,15 @@ def serve():
     _wire_knowledge_to_client_agents(team)
 
     # Start AgentOS (this blocks and serves the API + web UI)
-    os = AgentOS(
+    agent_os = AgnoAgentOS(
         name="company-brain",
-        agents=[team],
+        teams=[team],
         db=db,
     )
 
     # Mount the WhatsApp webhook routes onto AgentOS's FastAPI app,
     # so a single port serves both the UI/API and the webhook.
-    agent_os_app = os.get_app()
+    agent_os_app = agent_os.get_app()
     for route in webhook_app.routes:
         if hasattr(route, "methods") and any(
             agent_os_app.routes and getattr(r, "path", None) == route.path
@@ -194,7 +194,7 @@ def serve():
     logger.info("AgentOS Web UI will be available at http://localhost:8000")
     logger.info(f"Active agents: {[m.name for m in team.members]}")
 
-    os.serve()
+    agent_os.serve(agent_os_app, host=AGENTOS_HOST, port=AGENTOS_PORT)
 
     # NOTE: The WhatsApp webhook is now served by the same process/port —
     # no second uvicorn server needed.
