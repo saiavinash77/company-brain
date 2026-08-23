@@ -27,3 +27,10 @@ Thumbs.db
 
 # Docker
 pgdata/
+build.log
+rebuild*.log
+.venv/
+.env
+__pycache__/
+*.pyc
+data/companybrain_memory.db
