@@ -39,3 +39,6 @@ rebuild*.log
 __pycache__/
 *.pyc
 data/companybrain_memory.db
+
+# local diagnostic scratch (session tooling, not part of the app)
+/_scratch/

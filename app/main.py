@@ -207,31 +207,25 @@ def serve():
     # Wire knowledge into any pre-spawned client agents
     _wire_knowledge_to_client_agents(team)
 
-    # Start AgentOS (this blocks and serves the API + web UI)
+    # Start AgentOS (this blocks and serves the API + web UI).
+    # The WhatsApp webhook and office-floor routes live on our own FastAPI
+    # app, which is handed to AgentOS as base_app: registering them BEFORE
+    # AgentOS builds its route table keeps every route first-class. Appending
+    # mounts after get_app() breaks fastapi>=0.141 dispatch (the /floor mount
+    # was never consulted and its path fell into a self-redirect loop).
+    _mount_floor_ui(webhook_app)
     agent_os = AgnoAgentOS(
         name="company-brain",
         teams=[team],
         db=db,
+        base_app=webhook_app,
     )
-
-    # Mount the WhatsApp webhook routes onto AgentOS's FastAPI app,
-    # so a single port serves both the UI/API and the webhook.
     agent_os_app = agent_os.get_app()
-    for route in webhook_app.routes:
-        if hasattr(route, "methods") and any(
-            agent_os_app.routes and getattr(r, "path", None) == route.path
-            for r in agent_os_app.routes
-        ):
-            continue  # avoid duplicate paths (e.g. /health)
-        agent_os_app.router.routes.append(route)
+
     logger.info("WhatsApp webhook mounted at /webhook/whatsapp on the AgentOS app")
-
-    # Serve the office-floor wrapper UI (iframes the AgentOS UI + live floor
-    # overlay) from the same port, when the widget has been built.
-    _mount_floor_ui(agent_os_app)
-
     logger.info(f"Company Brain starting on {AGENTOS_HOST}:{AGENTOS_PORT}")
     logger.info("AgentOS Web UI will be available at http://localhost:8000")
+    logger.info("Office floor wrapper page available at http://localhost:8000/floor/")
     logger.info(f"Active agents: {[m.name for m in team.members]}")
 
     agent_os.serve(agent_os_app, host=AGENTOS_HOST, port=AGENTOS_PORT)
@@ -254,13 +248,26 @@ def _mount_floor_ui(app) -> None:
     the widget itself talks to /ws/agent-status + /api/agent-status/snapshot.
     """
     dist = Path(__file__).resolve().parent.parent / "office-floor-widget" / "dist"
-    if (dist / "index.html").exists():
-        app.mount("/floor", StaticFiles(directory=str(dist), html=True), name="floor")
-        logger.info("Office floor UI mounted at /floor (from %s)", dist)
-    else:
+    if not (dist / "index.html").exists():
         logger.warning(
             "Office floor UI not built — run: cd office-floor-widget && npm install && npm run build"
         )
+        return
+    if any(getattr(r, "path", None) == "/floor" for r in app.routes):
+        return  # already mounted (serve() and serve_webhook_only() share webhook_app)
+    app.mount("/floor", StaticFiles(directory=str(dist), html=True), name="floor")
+
+    # Agno's TrailingSlashMiddleware rewrites "/floor/" -> "/floor" before
+    # routing, so StaticFiles' add-slash redirect loops forever on the bare
+    # mount path. Serve the wrapper page directly on "/floor" instead —
+    # no redirect involved; the mount above still serves /floor/assets/*.
+    from fastapi.responses import FileResponse
+
+    @app.get("/floor", include_in_schema=False)
+    async def _floor_page():
+        return FileResponse(str(dist / "index.html"))
+
+    logger.info("Office floor UI mounted at /floor (from %s)", dist)
 
 
 if __name__ == "__main__":
