@@ -101,3 +101,8 @@ docker compose up -d --build
 4. All pricing/negotiation requires owner approval
 5. Full audit trail of every agent action
 6. Models: Groq + Gemini + Mistral ONLY
+
+## Boot Notes (verified 2026-08-24)
+- Run from repo root as a module: `.venv\Scripts\python.exe -m app.main` — `python app\main.py` fails with `ModuleNotFoundError: No module named 'app'`.
+- serve() blocks silently at "Initializing Company Brain..." if Postgres is down. Start Docker Desktop first (`C:\Program Files\Docker\Docker\Docker Desktop.exe`); compose services `company-brain-db`/`company-brain-app` auto-start with it. Verify DB via port 5432 listening.
+- After changing office-floor-widget src, always `npm run build` before serving — dist/ is committed and stale hashes will 404.
