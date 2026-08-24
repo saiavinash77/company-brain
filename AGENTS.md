@@ -106,3 +106,4 @@ docker compose up -d --build
 - Run from repo root as a module: `.venv\Scripts\python.exe -m app.main` — `python app\main.py` fails with `ModuleNotFoundError: No module named 'app'`.
 - serve() blocks silently at "Initializing Company Brain..." if Postgres is down. Start Docker Desktop first (`C:\Program Files\Docker\Docker\Docker Desktop.exe`); compose services `company-brain-db`/`company-brain-app` auto-start with it. Verify DB via port 5432 listening.
 - After changing office-floor-widget src, always `npm run build` before serving — dist/ is committed and stale hashes will 404.
+- Port 8000 is owned by the docker container (wslrelay). A local `python -m app.main` can still bind 127.0.0.1:8000 alongside it — probes hitting 127.0.0.1 see the local server while browsers on ::1/localhost may hit the stale container. After changing app/widget code, always rebuild: `docker compose up -d --build` (image unpack alone ~55s; give it 600s+).
