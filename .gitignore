@@ -7,6 +7,11 @@ dist/
 build/
 *.egg
 
+# Office floor widget (built dist IS committed so the server can serve /floor
+# without a Node toolchain; sources live in office-floor-widget/src)
+!office-floor-widget/dist/
+office-floor-widget/node_modules/
+
 # Environment
 .env
 .venv/

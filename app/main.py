@@ -2,9 +2,11 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 
 from app.config import (
     AGENTOS_HOST,
@@ -13,6 +15,8 @@ from app.config import (
     TWILIO_ACCOUNT_SID,
 )
 from app.memory.super_memory import SuperMemory
+from app.telemetry.agent_events import bus
+from app.telemetry.floor_config import FLOOR_META, fixed_agents
 from app.teams.company_brain_team import (
     build_company_brain_team,
     get_lead_conversion,
@@ -38,6 +42,38 @@ top_agent = get_top_agent(team)
 @webhook_app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "company-brain"}
+
+
+# ---- Office-floor live status (Task: Agent Activity Floor) ----
+
+@webhook_app.get("/api/agent-status/snapshot")
+async def agent_status_snapshot():
+    """Initial floor state for page load: all fixed desks + live states."""
+    payload = bus.snapshot(fixed_agents())
+    payload["floor"] = FLOOR_META
+    return payload
+
+
+@webhook_app.websocket("/ws/agent-status")
+async def ws_agent_status(websocket: WebSocket):
+    """Broadcast live agent activity events to connected floor views."""
+    await websocket.accept()
+    queue = bus.subscribe()
+    try:
+        # Initial state on connect, then live events.
+        payload = bus.snapshot(fixed_agents())
+        payload["floor"] = FLOOR_META
+        payload["kind"] = "snapshot"
+        await websocket.send_json(payload)
+        while True:
+            event = await queue.get()
+            await websocket.send_json(event)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.debug(f"agent-status websocket closed: {e}")
+    finally:
+        bus.unsubscribe(queue)
 
 
 @webhook_app.get("/api/clients")
@@ -190,6 +226,10 @@ def serve():
         agent_os_app.router.routes.append(route)
     logger.info("WhatsApp webhook mounted at /webhook/whatsapp on the AgentOS app")
 
+    # Serve the office-floor wrapper UI (iframes the AgentOS UI + live floor
+    # overlay) from the same port, when the widget has been built.
+    _mount_floor_ui(agent_os_app)
+
     logger.info(f"Company Brain starting on {AGENTOS_HOST}:{AGENTOS_PORT}")
     logger.info("AgentOS Web UI will be available at http://localhost:8000")
     logger.info(f"Active agents: {[m.name for m in team.members]}")
@@ -202,8 +242,25 @@ def serve():
 
 def serve_webhook_only():
     """Start only the webhook server (for development/testing)."""
+    _mount_floor_ui(webhook_app)
     logger.info(f"Starting webhook server on {AGENTOS_HOST}:{AGENTOS_PORT}")
     uvicorn.run(webhook_app, host=AGENTOS_HOST, port=AGENTOS_PORT)
+
+
+def _mount_floor_ui(app) -> None:
+    """Serve office-floor-widget/dist at /floor (wrapper page + floor overlay).
+
+    The wrapper page iframes the AgentOS UI and adds the Office Floor button;
+    the widget itself talks to /ws/agent-status + /api/agent-status/snapshot.
+    """
+    dist = Path(__file__).resolve().parent.parent / "office-floor-widget" / "dist"
+    if (dist / "index.html").exists():
+        app.mount("/floor", StaticFiles(directory=str(dist), html=True), name="floor")
+        logger.info("Office floor UI mounted at /floor (from %s)", dist)
+    else:
+        logger.warning(
+            "Office floor UI not built — run: cd office-floor-widget && npm install && npm run build"
+        )
 
 
 if __name__ == "__main__":

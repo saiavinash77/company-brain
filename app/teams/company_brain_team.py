@@ -23,8 +23,41 @@ from app.providers.web_provider import WebProvider
 from app.workflows.lead_conversion_workflow import LeadConversionWorkflow
 from app.workflows.pricing_request_workflow import PricingRequestWorkflow
 from app.workflows.daily_briefing_workflow import DailyBriefingWorkflow
+from app.telemetry.agent_events import (
+    bus,
+    instrument_agent,
+    instrument_coroutine,
+)
+from app.telemetry.floor_config import AGENT_FLOOR_MAP
 
 logger = logging.getLogger("company-brain")
+
+
+def create_context_providers(memory: SuperMemory) -> dict:
+    """Build the Company Brain provider registry.
+
+    One instance per provider, deduped by ``ContextProvider.id``, with
+    startup status logged. Kept deliberately simple — 4 fixed providers,
+    not Scout's dynamic registry.
+    """
+    providers = [
+        TwilioProvider(),
+        WebProvider(),
+        GmailProvider(),
+        MemoryProvider(memory=memory),
+    ]
+    registry: dict = {}
+    for provider in providers:
+        if provider.id in registry:
+            logger.warning("Duplicate provider id '%s' — keeping first instance", provider.id)
+            continue
+        registry[provider.id] = provider
+        status = provider.status()
+        if status.ok:
+            logger.info("Provider ready: %s (id=%s) — %s", provider.name, provider.id, status.detail)
+        else:
+            logger.info("Provider unavailable: %s (id=%s) — %s", provider.name, provider.id, status.detail)
+    return registry
 
 
 def build_company_brain_team(memory: SuperMemory) -> Team:
@@ -49,78 +82,41 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
     strategy_agent = create_strategy_agent()
     briefing_agent = create_briefing_agent()
 
-    # Create providers
-    twilio_provider = TwilioProvider()
-    web_provider = WebProvider()
-    gmail_provider = GmailProvider()
-    memory_provider = MemoryProvider(memory=memory)
+    # Create providers via the registry (deduped by ContextProvider.id,
+    # statuses logged once at startup)
+    providers = create_context_providers(memory)
 
-    # Wire tools into Top Agent (gets Twilio + Gmail + Memory)
-    top_agent.tools.extend(twilio_provider.get_tools())
-    top_agent.tools.extend(memory_provider.get_tools())
-    top_agent.instructions.extend([
-        twilio_provider.get_instructions(),
-        memory_provider.get_instructions(),
-    ])
-    if gmail_provider.is_available():
-        top_agent.tools.extend(gmail_provider.get_tools())
-        top_agent.instructions.append(gmail_provider.get_instructions())
-
-    # Wire tools into Sales Agent (Web + Memory)
-    sales_agent.tools.extend(web_provider.get_tools())
-    sales_agent.tools.extend(memory_provider.get_tools())
-    sales_agent.instructions.extend([
-        web_provider.get_instructions(),
-        memory_provider.get_instructions(),
-    ])
-
-    # Wire tools into Onboarding Agent (Memory)
-    onboarding_agent.tools.extend(memory_provider.get_tools())
-    onboarding_agent.instructions.append(memory_provider.get_instructions())
-
-    # Wire tools into Negotiation Agent (Memory + Web for market research)
-    negotiation_agent.tools.extend(memory_provider.get_tools())
-    negotiation_agent.tools.extend(web_provider.get_tools())
-    negotiation_agent.instructions.extend([
-        memory_provider.get_instructions(),
-        web_provider.get_instructions(),
-    ])
-
-    # Wire tools into Finance Agent (Memory)
-    finance_agent.tools.extend(memory_provider.get_tools())
-    finance_agent.instructions.append(memory_provider.get_instructions())
-
-    # Wire tools into Legal Agent (Memory)
-    legal_agent.tools.extend(memory_provider.get_tools())
-    legal_agent.instructions.append(memory_provider.get_instructions())
-
-    # Wire tools into Idea Agent (Memory)
-    idea_agent.tools.extend(memory_provider.get_tools())
-    idea_agent.instructions.append(memory_provider.get_instructions())
-
-    # Wire tools into Refinement Agent (Memory)
-    refinement_agent.tools.extend(memory_provider.get_tools())
-    refinement_agent.instructions.append(memory_provider.get_instructions())
-
-    # Wire tools into Market Research Agent (Web + Memory)
-    market_research_agent.tools.extend(web_provider.get_tools())
-    market_research_agent.tools.extend(memory_provider.get_tools())
-    market_research_agent.instructions.extend([
-        web_provider.get_instructions(),
-        memory_provider.get_instructions(),
-    ])
-
-    # Wire tools into Strategy Agent (Memory + Web)
-    strategy_agent.tools.extend(memory_provider.get_tools())
-    strategy_agent.tools.extend(web_provider.get_tools())
-    strategy_agent.instructions.extend([
-        memory_provider.get_instructions(),
-        web_provider.get_instructions(),
-    ])
-
-    # Wire tools into Briefing Agent (Memory)
-    briefing_agent.tools.extend(memory_provider.get_tools())
-    briefing_agent.instructions.append(memory_provider.get_instructions())
+    # Wire tools/instructions: (agent, ordered provider ids).
+    # Providers whose status is not ok are skipped with a log line
+    # (e.g. Gmail when OAuth env vars are missing).
+    # NOTE: list of pairs — agno Agents don't hash as dict keys.
+    provider_wiring = [
+        (top_agent, ["twilio", "memory", "gmail"]),
+        (sales_agent, ["web", "memory"]),
+        (onboarding_agent, ["memory"]),
+        (negotiation_agent, ["memory", "web"]),
+        (finance_agent, ["memory"]),
+        (legal_agent, ["memory"]),
+        (idea_agent, ["memory"]),
+        (refinement_agent, ["memory"]),
+        (market_research_agent, ["web", "memory"]),
+        (strategy_agent, ["memory", "web"]),
+        (briefing_agent, ["memory"]),
+    ]
+    for agent, provider_ids in provider_wiring:
+        for pid in provider_ids:
+            provider = providers[pid]
+            status = provider.status()
+            if not status.ok:
+                logger.info(
+                    "Skipping %s for %s — %s",
+                    provider.name,
+                    agent.name,
+                    status.detail,
+                )
+                continue
+            agent.tools.extend(provider.get_tools())
+            agent.instructions.append(provider.get_instructions())
 
     # Build the team
     team = Team(
@@ -171,6 +167,63 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
         audit_memory=memory.audit,
     )
     team._daily_briefing = DailyBriefingWorkflow(memory=memory)
+
+    # ---- Office-floor telemetry: instrument every real invocation point ----
+    # Member runs (covers direct runs AND coordinate-mode delegation).
+    for member in (
+        top_agent,
+        sales_agent,
+        onboarding_agent,
+        negotiation_agent,
+        finance_agent,
+        legal_agent,
+        idea_agent,
+        refinement_agent,
+        market_research_agent,
+        strategy_agent,
+        briefing_agent,
+    ):
+        expected = {entry["agent_id"] for entry in AGENT_FLOOR_MAP}
+        aid = instrument_agent(member)
+        if aid not in expected:
+            logger.warning("Agent id '%s' has no desk in floor_config", aid)
+
+    # Workflow triggers, tagged to the agents involved.
+    instrument_coroutine(
+        team._lead_conversion,
+        "run",
+        agent_id="top_agent",
+        agent_name="Top Agent",
+        summary_from_args=lambda *a, **k: f"converting lead {k.get('client_name') or (a[1] if len(a) > 1 else '')}",
+    )
+    instrument_coroutine(
+        team._pricing_request,
+        "prepare_pricing_context",
+        agent_id="negotiation_agent",
+        agent_name="Negotiation Agent",
+        summary_from_args=lambda *a, **k: f"pricing options for {k.get('client_name') or (a[1] if len(a) > 1 else '')}",
+    )
+    instrument_coroutine(
+        team._pricing_request,
+        "record_pricing_decision",
+        agent_id="negotiation_agent",
+        agent_name="Negotiation Agent",
+        summary_from_args=lambda *a, **k: f"pricing approved for {k.get('client_name') or (a[1] if len(a) > 1 else '')}",
+    )
+    instrument_coroutine(
+        team._daily_briefing,
+        "run_daily_briefing",
+        agent_id="briefing_agent",
+        agent_name="Briefing Agent",
+        summary_from_args=lambda: "generating daily briefing",
+    )
+    instrument_coroutine(
+        team._daily_briefing,
+        "run_weekly_briefing",
+        agent_id="briefing_agent",
+        agent_name="Briefing Agent",
+        summary_from_args=lambda: "generating weekly briefing",
+    )
 
     return team
 

@@ -8,6 +8,7 @@ from app.agents.onboarding_agent import create_onboarding_agent
 from app.memory.client_vault import ClientVault
 from app.memory.super_memory import SuperMemory
 from app.providers.memory_provider import MemoryProvider
+from app.telemetry.agent_events import STATE_IDLE, STATE_WORKING, AgentEvent, bus
 
 logger = logging.getLogger("company-brain.workflows")
 
@@ -111,6 +112,27 @@ class LeadConversionWorkflow(Workflow):
 
         logger.info(f"Client Agent spawned: {client_agent.name}")
 
+        # Office floor: give the new Client Agent a temporary desk while active.
+        # (Removed later via bus.roster_remove when the client is offboarded.)
+        bus.roster_add(
+            {
+                "agent_id": f"client_{client_id}",
+                "name": f"Client Agent — {client_name}",
+                "role": f"dedicated to {client_name}",
+                "accent": "#FFA07A",
+                "accent_alt": "#FFD0B5",
+                "desk": _temp_desk(len(self._client_agents)),
+            }
+        )
+        bus.publish(
+            AgentEvent(
+                agent_id=f"client_{client_id}",
+                agent_name=client_agent.name,
+                state=STATE_IDLE,
+                task_summary="spawned via lead conversion",
+            )
+        )
+
         # Step 4: Log onboarding trigger
         await self.memory.audit.log_action(
             agent_id="onboarding_agent",
@@ -118,6 +140,13 @@ class LeadConversionWorkflow(Workflow):
             details={"client_id": client_id, "client_name": client_name},
             client_id=client_id,
         )
+        # Floor pulse: onboarding picks the new client up from here.
+        bus.publish(AgentEvent("onboarding_agent", "Onboarding Agent", STATE_WORKING,
+                               target_agent_id=f"client_{client_id}",
+                               task_summary=f"onboarding checklist for {client_name}"))
+        bus.publish(AgentEvent("onboarding_agent", "Onboarding Agent", STATE_IDLE,
+                               target_agent_id=f"client_{client_id}",
+                               task_summary=f"onboarding checklist ready for {client_name}"))
 
         # Step 5: Return summary
         summary = {
@@ -138,3 +167,13 @@ class LeadConversionWorkflow(Workflow):
         logger.info(f"Lead conversion complete: {summary['message']}")
 
         return summary
+
+
+def _temp_desk(index: int) -> dict:
+    """Deterministic temporary desk positions along the bottom edge."""
+    return {"x": 80 + index * 100, "y": 530}
+
+
+def remove_client_desk(client_id: str) -> None:
+    """Take a Client Agent's temporary desk off the floor (offboarding)."""
+    bus.roster_remove(f"client_{client_id}")

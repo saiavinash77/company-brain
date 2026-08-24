@@ -1,8 +1,13 @@
+import logging
+
+from agno.context.provider import Status
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 
 from app.config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, OWNER_NUMBER
 from app.providers.base_provider import BaseProvider
+
+logger = logging.getLogger("company-brain.twilio")
 
 
 class TwilioProvider(BaseProvider):
@@ -12,9 +17,13 @@ class TwilioProvider(BaseProvider):
     All owner communications are routed through the Top Agent.
 
     Requires: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, OWNER_NUMBER
+
+    Lifecycle: ``asetup()`` builds the Twilio REST client eagerly;
+    ``aclose()`` drops it so credentials aren't held longer than needed.
     """
 
     def __init__(self):
+        super().__init__(provider_id="twilio", name="Twilio WhatsApp")
         self._client = None
 
     def _get_client(self) -> Client:
@@ -22,8 +31,40 @@ class TwilioProvider(BaseProvider):
             self._client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         return self._client
 
-    def is_available(self) -> bool:
-        return bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER and OWNER_NUMBER)
+    def status(self) -> Status:
+        if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER and OWNER_NUMBER:
+            return Status(ok=True, detail="Twilio WhatsApp credentials configured")
+        missing = [
+            name
+            for name, val in (
+                ("TWILIO_ACCOUNT_SID", TWILIO_ACCOUNT_SID),
+                ("TWILIO_AUTH_TOKEN", TWILIO_AUTH_TOKEN),
+                ("TWILIO_PHONE_NUMBER", TWILIO_PHONE_NUMBER),
+                ("OWNER_NUMBER", OWNER_NUMBER),
+            )
+            if not val
+        ]
+        return Status(ok=False, detail=f"Missing Twilio config: {', '.join(missing)}")
+
+    async def astatus(self) -> Status:
+        # Configuration check only — no network ping, so sync == async.
+        return self.status()
+
+    async def asetup(self) -> None:
+        """Eagerly build the Twilio REST client.
+
+        Idempotent and safe to call when unconfigured (no-op with a warning).
+        """
+        if not self.is_available():
+            logger.warning("Twilio provider not configured — asetup skipped")
+            return
+        self._get_client()
+        logger.info("Twilio provider setup complete")
+
+    async def aclose(self) -> None:
+        """Drop the cached Twilio client."""
+        self._client = None
+        logger.info("Twilio provider closed")
 
     def get_tools(self) -> list:
         return [self.send_whatsapp_message, self.get_whatsapp_history]

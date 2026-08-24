@@ -1,4 +1,4 @@
-from typing import Optional
+from agno.context.provider import Status
 
 from app.memory.super_memory import SuperMemory
 from app.providers.base_provider import BaseProvider
@@ -9,11 +9,27 @@ class MemoryProvider(BaseProvider):
 
     Gives agents access to working memory (tasks), client vaults,
     and audit logging. Each agent gets scoped access.
+
+    Holds no connection of its own (the backend is shared via SuperMemory):
+    inherits the no-op ``asetup()``/``aclose()`` lifecycle from ContextProvider.
     """
 
-    def __init__(self, memory: SuperMemory, client_id: Optional[str] = None):
+    def __init__(self, memory: SuperMemory, client_id: str | None = None):
+        # Per-client instances get a distinct id so registries can dedupe by id
+        # without collapsing scoped providers into the general one.
+        provider_id = f"memory:{client_id}" if client_id else "memory"
+        super().__init__(provider_id=provider_id, name=f"Memory ({client_id})" if client_id else "Memory")
         self.memory = memory
         self.client_id = client_id  # For Client Agents, None for general agents
+
+    def status(self) -> Status:
+        if self.memory is not None:
+            scope = f"scoped to client '{self.client_id}'" if self.client_id else "general scope"
+            return Status(ok=True, detail=f"SuperMemory available ({scope})")
+        return Status(ok=False, detail="No SuperMemory instance attached")
+
+    async def astatus(self) -> Status:
+        return self.status()
 
     def get_tools(self) -> list:
         return [

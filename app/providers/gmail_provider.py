@@ -10,6 +10,8 @@ import httpx
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+from agno.context.provider import Status
+
 from app.config import GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN
 from app.providers.base_provider import BaseProvider
 
@@ -26,6 +28,9 @@ class GmailProvider(BaseProvider):
     - Search emails by query
 
     Requires: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN
+
+    Lifecycle: ``asetup()`` builds the OAuth credentials + Gmail service
+    eagerly; ``aclose()`` releases the HTTP session and drops both.
     """
 
     SCOPES = [
@@ -35,11 +40,45 @@ class GmailProvider(BaseProvider):
     ]
 
     def __init__(self):
+        super().__init__(provider_id="gmail", name="Gmail")
         self._service = None
         self._creds = None
+        self._http: httpx.Client | None = None
 
-    def is_available(self) -> bool:
-        return bool(GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN)
+    def status(self) -> Status:
+        if GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN:
+            return Status(ok=True, detail="Gmail OAuth credentials configured")
+        return Status(
+            ok=False,
+            detail="Missing GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REFRESH_TOKEN",
+        )
+
+    async def astatus(self) -> Status:
+        # Configuration check only — no network ping, so sync == async.
+        return self.status()
+
+    async def asetup(self) -> None:
+        """Eagerly build OAuth credentials and the Gmail API service.
+
+        Idempotent and safe to call when unconfigured (no-op with a warning).
+        """
+        if not self.is_available():
+            logger.warning("Gmail provider not configured — asetup skipped")
+            return
+        if self._service is not None:
+            return
+        creds = self._get_credentials()
+        self._service = build("gmail", "v1", credentials=creds)
+        logger.info("Gmail provider setup complete")
+
+    async def aclose(self) -> None:
+        """Release the HTTP session and drop cached credentials/service."""
+        if self._http is not None:
+            self._http.close()
+            self._http = None
+        self._service = None
+        self._creds = None
+        logger.info("Gmail provider closed")
 
     def _get_credentials(self) -> Credentials:
         """Get or refresh OAuth2 credentials."""
@@ -54,9 +93,11 @@ class GmailProvider(BaseProvider):
             scopes=self.SCOPES,
         )
 
-        # Refresh if expired
+        # Refresh if expired (persistent session, released by aclose())
         if self._creds.expired:
-            self._creds.refresh(httpx.Client())
+            if self._http is None:
+                self._http = httpx.Client()
+            self._creds.refresh(self._http)
             logger.info("Gmail credentials refreshed")
 
         return self._creds
