@@ -1,9 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// base './' so the built page works when FastAPI serves it under /floor
+// base '/floor/' -> absolute asset URLs, correct no matter whether the page
+// is served at "/" or "/floor" (agno's middleware strips trailing slashes,
+// which breaks relative "./assets" resolution).
 export default defineConfig({
-  base: './',
+  base: '/floor/',
   plugins: [react()],
   server: {
     port: 5175,

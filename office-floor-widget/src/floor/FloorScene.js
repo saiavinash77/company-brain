@@ -1,13 +1,17 @@
-// Pixi office floor scene: fixed desks from the backend snapshot, procedural
-// avatars, state machine (idle-at-desk / walking / working / talking-handoff),
-// and envelope flights on real handoff events. Rebuilt from the munder-difflin
-// office-scene concepts as a plain web component driven by WebSocket events —
-// no Electron, no PTY payloads, no dynamic floor growth.
+// Pixi office floor scene — Company Brain HQ.
+//
+// Ported from munder-difflin's office scene concepts: animated walk-cycle
+// legs, task-keyword station routing (walk → tool bubble at the station →
+// carry artifact back), speech bubbles with live task text, success sparkles,
+// clickable actors, and envelope flights on real handoff events.
+//
+// Driven entirely by backend WebSocket events; no mock data.
 
 import { Application, Container, Graphics, Text, Texture, Sprite } from 'pixi.js'
 import { COLORS, WORLD, WALK_SPEED } from './tokens.js'
 import { makeAvatarTexture } from './portrait.js'
 import { Envelope } from './Envelope.js'
+import { STATIONS, pickStation, artifactFor, drawArtifact, drawDecor } from './stations.js'
 
 const TILE = 32
 
@@ -16,9 +20,15 @@ export class FloorScene {
     this.canvas = canvas
     this.app = null
     this.world = null
-    this.actors = new Map() // agent_id -> actor
+    this.actors = new Map() // agent_id -> Actor
     this.envelopes = []
+    this.sparkles = []
     this.destroyed = false
+    this.callbacks = {} // { onSelect(meta), onToast({fromName,toName}), onMoment(text) }
+  }
+
+  setCallbacks(cb) {
+    this.callbacks = cb || {}
   }
 
   async init() {
@@ -34,6 +44,27 @@ export class FloorScene {
     this.world = new Container()
     this.app.stage.addChild(this.world)
     drawFloor(this.world)
+    drawDecor(this.world)
+    for (const st of STATIONS) {
+      const g = new Graphics()
+      st.draw(g)
+      g.position.set(st.x, st.y)
+      g.zIndex = Math.round(st.y)
+      const lbl = new Text({
+        text: st.label,
+        style: {
+          fontFamily: '"Pixelify Sans", monospace',
+          fontSize: 11,
+          fill: '#5C4A38',
+          stroke: { color: COLORS.paper, width: 3 },
+        },
+      })
+      lbl.anchor.set(0.5, 1)
+      lbl.position.set(st.x + 30, st.y - 6)
+      lbl.zIndex = Math.round(st.y) + 1
+      this.world.addChild(g, lbl)
+    }
+    this.world.sortableChildren = true
     this.app.ticker.add((ticker) => this.tick(ticker.deltaMS / 1000))
   }
 
@@ -57,18 +88,24 @@ export class FloorScene {
     if (!actor) return
     if (ev.state === 'working') actor.startWorking(ev.task_summary || '')
     else if (ev.state === 'idle') actor.goIdle()
+    else if (ev.state === 'blocked') actor.setBlocked(true)
     else if (ev.state === 'handoff') {
       const target = ev.target_agent_id ? this.actors.get(ev.target_agent_id) : null
       if (target) {
-        this.spawnEnvelope(actor.deskPoint(), target.deskPoint())
         actor.faceTowards(target.deskPoint())
         target.receiveHandoff()
+        this.spawnEnvelope(actor.deskPoint(), target.deskPoint(), {
+          fromName: actor.meta.name,
+          toName: target.meta.name,
+        })
       }
     }
   }
 
-  spawnEnvelope(fromPt, toPt) {
-    const env = new Envelope(fromPt, toPt)
+  spawnEnvelope(fromPt, toPt, meta = {}) {
+    const env = new Envelope(fromPt, toPt, () => {
+      this.callbacks.onToast?.(meta)
+    })
     this.world.addChild(env.view)
     env.view.zIndex = 500
     this.envelopes.push(env)
@@ -79,7 +116,10 @@ export class FloorScene {
       this.actors.get(meta.agent_id).updateMeta(meta)
       return
     }
-    const actor = new Actor(this.world, meta)
+    const actor = new Actor(this.world, meta, {
+      onSelect: (m) => this.callbacks.onSelect?.(m),
+      onSparkle: (pt, color) => this.spawnSparkle(pt, color),
+    })
     this.actors.set(meta.agent_id, actor)
   }
 
@@ -90,9 +130,20 @@ export class FloorScene {
     this.actors.delete(agentId)
   }
 
+  spawnSparkle(pt, color = COLORS.statusSuccess) {
+    const g = new Graphics()
+    const view = new Container()
+    view.addChild(g)
+    view.position.set(pt.x, pt.y)
+    view.zIndex = 600
+    this.world.addChild(view)
+    this.sparkles.push({ view, g, t: 0, color })
+  }
+
   tick(dt) {
     if (this.destroyed) return
     for (const actor of this.actors.values()) actor.update(dt)
+
     for (let i = this.envelopes.length - 1; i >= 0; i--) {
       const env = this.envelopes[i]
       env.update(dt)
@@ -102,6 +153,23 @@ export class FloorScene {
         this.envelopes.splice(i, 1)
       } else if (env.done) {
         env.burstAge += dt
+      }
+    }
+
+    for (let i = this.sparkles.length - 1; i >= 0; i--) {
+      const sp = this.sparkles[i]
+      sp.t += dt
+      sp.g.clear()
+      const r = 4 + sp.t * 26
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2 + sp.t * 2
+        sp.g.circle(Math.cos(a) * r, Math.sin(a) * r * 0.6, 2).fill(sp.color)
+      }
+      sp.view.alpha = Math.max(0, 1 - sp.t / 0.7)
+      if (sp.t > 0.7) {
+        this.world.removeChild(sp.view)
+        sp.view.destroy({ children: true })
+        this.sparkles.splice(i, 1)
       }
     }
   }
@@ -138,23 +206,57 @@ function drawFloor(world) {
   world.addChild(sign)
 }
 
+// 4-frame leg cycle per DESIGN.md §8.5 — frames [idle, stepA, idle, stepB].
+// Drawn in portrait-pixel units (1 unit = 4 canvas px); the container shares
+// the sprite's 0.9 scale and is anchored at the hip line.
+function drawLegsFrame(g, frame) {
+  g.clear()
+  const LEG = COLORS.outfitBase
+  const SHOE = COLORS.ink
+  if (frame === 1) {
+    // step-A: left foot raised
+    g.rect(-16, 0, 14, 18).fill(LEG)
+    g.rect(-17, 16, 16, 4).fill(SHOE)
+    g.rect(2, 0, 14, 24).fill(LEG)
+    g.rect(1, 22, 16, 4).fill(SHOE)
+  } else if (frame === 3) {
+    // step-B: right foot raised
+    g.rect(-16, 0, 14, 24).fill(LEG)
+    g.rect(-17, 22, 16, 4).fill(SHOE)
+    g.rect(2, 0, 14, 18).fill(LEG)
+    g.rect(1, 16, 16, 4).fill(SHOE)
+  } else {
+    // idle stance
+    g.rect(-16, 0, 14, 24).fill(LEG)
+    g.rect(-17, 22, 16, 4).fill(SHOE)
+    g.rect(2, 0, 14, 24).fill(LEG)
+    g.rect(1, 22, 16, 4).fill(SHOE)
+  }
+}
+
 class Actor {
-  constructor(world, meta) {
+  constructor(world, meta, hooks = {}) {
     this.world = world
+    this.hooks = hooks
     this.meta = meta
     this.state = meta.state || 'idle'
     this.summary = meta.task_summary || ''
     this.facing = 1
 
     this.root = new Container()
-    this.root.eventMode = 'none'
 
-    // avatar sprite (pre-rendered procedural portrait)
-    const tex = Texture.from(makeAvatarTexture(meta))
-    tex.source.scaleMode = 'nearest' // crisp pixels
+    // avatar sprite WITHOUT baked legs — legs animate separately below hips
+    const tex = Texture.from(makeAvatarTexture(meta, 4, false))
+    tex.source.scaleMode = 'nearest'
     this.sprite = new Sprite(tex)
     this.sprite.scale.set(0.9)
     this.sprite.anchor.set(0.5, 1)
+
+    // animated legs (own container sharing the sprite scale)
+    this.legs = new Container()
+    this.legsG = new Graphics()
+    this.legs.addChild(this.legsG)
+    this.legs.scale.set(0.9)
 
     // desk drawn behind/below avatar
     this.deskG = new Graphics()
@@ -172,28 +274,63 @@ class Actor {
     })
     this.label.anchor.set(0.5, 0)
 
-    // status bubble (working dots / zzz)
+    // speech/status bubble
     this.bubble = new Container()
     this.bubbleBg = new Graphics()
     this.bubbleDots = new Graphics()
+    this.bubbleText = null
     this.bubble.addChild(this.bubbleBg, this.bubbleDots)
 
-    this.root.addChild(this.deskG, this.sprite, this.label, this.bubble)
+    // artifact carried in hands while returning from a station
+    this.artifact = new Graphics()
+    this.carrying = null
+
+    // blocked "!" overlay
+    this.blockedMark = new Text({
+      text: '!',
+      style: {
+        fontFamily: '"Press Start 2P", monospace',
+        fontSize: 12,
+        fill: COLORS.statusBlocked,
+        stroke: { color: COLORS.paper, width: 3 },
+      },
+    })
+    this.blockedMark.visible = false
+    this.blockedMark.anchor.set(0.5)
+
+    this.root.addChild(
+      this.deskG,
+      this.sprite,
+      this.legs,
+      this.label,
+      this.blockedMark,
+      this.bubble,
+      this.artifact,
+    )
     this.root.position.set(meta.desk.x, meta.desk.y)
     this.root.zIndex = Math.round(meta.desk.y)
     world.sortableChildren = true
     world.addChild(this.root)
 
-    // position: stand just above own desk
+    // click-to-select
+    this.root.eventMode = 'static'
+    this.root.cursor = 'pointer'
+    this.root.on('pointertap', () => this.hooks.onSelect?.({ ...this.meta }))
+
     this.homeX = meta.desk.x
     this.homeY = meta.desk.y - 14
     this.x = this.homeX
     this.y = this.homeY
-    this.targetX = this.homeX
-    this.targetY = this.homeY
 
+    this.route = [] // [{x,y}, ...] remaining waypoints
+    this.stationId = null
+    this.arrivedAtStation = false
+    this.lastStationId = null
+    this.showingTool = false
+    this.toolUntil = 0
     this.animT = 0
     this.talkUntil = 0
+
     this.drawDesk()
     this.redrawBubble()
   }
@@ -206,33 +343,72 @@ class Actor {
     this.meta = { ...this.meta, ...meta }
     if ((meta.state || 'idle') !== this.state) {
       if (meta.state === 'working') this.startWorking(meta.task_summary || '')
-      else if (meta.state === 'handoff') this.state = 'handoff'
+      else if (meta.state === 'handoff') {
+        this.state = 'handoff'
+        this.redrawBubble()
+      } else if (meta.state === 'blocked') this.setBlocked(true)
       else this.goIdle(true)
     } else if (meta.task_summary && meta.task_summary !== this.summary) {
       this.summary = meta.task_summary
+      this.redrawBubble()
     }
   }
 
   startWorking(summary) {
     this.state = 'working'
     if (summary !== undefined) this.summary = summary
-    // walk to desk first if away
-    if (Math.hypot(this.x - this.homeX, this.y - this.homeY) > 4) {
-      this.targetX = this.homeX
-      this.targetY = this.homeY
-    }
+    this.blockedMark.visible = false
+    this.carrying = null
+    this.artifact.clear()
+
+    const station = pickStation(summary)
+    this.stationId = station ? station.id : null
+    this.arrivedAtStation = false
+    this.route = station
+      ? [{ x: station.stand.x, y: station.stand.y }]
+      : [{ x: this.homeX, y: this.homeY }]
     this.redrawBubble()
   }
 
   goIdle(snap = false) {
+    const finishedAtStation = this.arrivedAtStation && !!this.lastStationId
+    const hadTask = !!this.summary
     this.state = 'idle'
     this.summary = ''
-    this.targetX = this.homeX
-    this.targetY = this.homeY
+    this.stationId = null
+    this.arrivedAtStation = false
+    this.showingTool = false
+    this.blockedMark.visible = false
+
+    if (finishedAtStation) {
+      // walk home carrying what the station produced (DESIGN.md §8.8)
+      this.carrying = artifactFor(this.lastStationId)
+      drawArtifact(this.artifact, this.carrying)
+      this.route = [{ x: this.homeX, y: this.homeY }]
+    } else if (hadTask) {
+      // finished at own desk — success sparkle
+      this.hooks.onSparkle?.(
+        { x: this.meta.desk.x, y: this.meta.desk.y - 20 },
+        COLORS.statusSuccess,
+      )
+      this.route = [{ x: this.homeX, y: this.homeY }]
+    } else if (!snap && Math.hypot(this.x - this.homeX, this.y - this.homeY) > 6) {
+      // interrupted mid-walk — head back to the desk
+      this.route = [{ x: this.homeX, y: this.homeY }]
+    } else {
+      this.route = []
+    }
     if (snap) {
       this.x = this.homeX
       this.y = this.homeY
+      this.route = []
     }
+    this.redrawBubble()
+  }
+
+  setBlocked(on) {
+    this.blockedMark.visible = !!on
+    if (on) this.state = 'blocked'
     this.redrawBubble()
   }
 
@@ -250,68 +426,146 @@ class Actor {
   update(dt) {
     this.animT += dt
 
-    // walking toward target at WALK_SPEED
-    const dx = this.targetX - this.x
-    const dy = this.targetY - this.y
-    const d = Math.hypot(dx, dy)
-    const moving = d > 2
-    if (moving) {
-      const step = Math.min(d, WALK_SPEED * dt)
-      this.x += (dx / d) * step
-      this.y += (dy / d) * step
-      if (Math.abs(dx) > 1) {
-        this.facing = dx < 0 ? -1 : 1
-        this.sprite.scale.x = Math.abs(this.sprite.scale.x) * this.facing
-      }
-    }
-
-    // idle bob / walk bob / work bounce
-    let bob = 0
-    if (moving) bob = Math.round(Math.abs(Math.sin(this.animT * 8)) * 2)
-    else if (this.state === 'working') bob = Math.sin(this.animT * 5) * 0.6
-    else bob = Math.sin(this.animT * 2.2) * 0.8
-
-    // root is anchored at the desk point; avatar floats relative to it
-    this.sprite.position.set(0, this.y - this.meta.desk.y + bob)
-    this.label.position.set(0, this.y - this.meta.desk.y + 4)
-
-    // handoff timeout back to previous visual state
-    if (this.state === 'handoff' && performance.now() > this.talkUntil) {
-      this.state = this.summary ? 'working' : 'idle'
+    // tool chip expiry → fall back to summary/dots bubble
+    if (this.showingTool && performance.now() > this.toolUntil) {
+      this.showingTool = false
       this.redrawBubble()
     }
 
-    // working typing dots animation
-    if (this.state === 'working') {
-      const frame = Math.floor(this.animT * 3) % 3
+    // waypoint following
+    let moving = false
+    if (this.route.length > 0) {
+      const wp = this.route[0]
+      const dx = wp.x - this.x
+      const dy = wp.y - this.y
+      const d = Math.hypot(dx, dy)
+      if (d <= 2.5) {
+        this.route.shift()
+        this.onArrive()
+      } else {
+        const step = Math.min(d, WALK_SPEED * dt)
+        this.x += (dx / d) * step
+        this.y += (dy / d) * step
+        if (Math.abs(dx) > 1) {
+          this.facing = dx < 0 ? -1 : 1
+          this.sprite.scale.x = Math.abs(this.sprite.scale.x) * this.facing
+        }
+        moving = true
+      }
+    }
+
+    // bob styles: walking bob / working bounce / idle breathe
+    let bob = 0
+    if (moving) bob = Math.round(Math.abs(Math.sin(this.animT * 8)) * 2)
+    else if (this.state === 'working' && !this.stationId) bob = Math.sin(this.animT * 5) * 0.6
+    else bob = Math.sin(this.animT * 2.2) * 0.8
+
+    const relY = this.y - this.meta.desk.y + bob
+    this.sprite.position.set(0, relY)
+    this.legs.position.set(0, relY + 1)
+    this.label.position.set(0, relY + 26)
+    if (this.carrying) this.artifact.position.set(0, relY - 40)
+    this.blockedMark.position.set(0, relY - 66)
+
+    // legs animate only while moving
+    const frame = moving ? [0, 1, 0, 3][Math.floor(this.animT * 8) % 4] : 0
+    drawLegsFrame(this.legsG, frame)
+
+    // typing dots when there is no summary text
+    if ((this.state === 'working' || this.state === 'handoff') && !this.summary && !moving) {
+      const f = Math.floor(this.animT * 3) % 3
       this.bubbleDots.clear()
       for (let i = 0; i < 3; i++) {
-        const on = i <= frame
-        this.bubbleDots.circle(-6 + i * 6, 7, 2.4).fill(on ? COLORS.ink : '#C9BBA6')
+        const on = i <= f
+        this.bubbleDots.circle(-6 + i * 6, -26, 2.4).fill(on ? COLORS.ink : '#C9BBA6')
       }
+    } else {
+      this.bubbleDots.clear()
+    }
+  }
+
+  onArrive() {
+    if (this.state === 'working' && this.stationId && !this.arrivedAtStation) {
+      this.arrivedAtStation = true
+      this.lastStationId = this.stationId
+      // show the tool chip for a moment ("running data queries" etc.)
+      this.showingTool = true
+      this.toolUntil = performance.now() + 2800
+      this.redrawBubble()
+    }
+    if (this.carrying) {
+      // artifact dropped onto the desk — sparkle
+      this.carrying = null
+      this.artifact.clear()
+      this.hooks.onSparkle?.(
+        { x: this.meta.desk.x, y: this.meta.desk.y - 20 },
+        COLORS.statusSuccess,
+      )
     }
   }
 
   redrawBubble() {
     this.bubbleBg.clear()
     this.bubbleDots.clear()
-    if (this.state === 'idle' && !this.summary) {
+    if (this.bubbleText) {
+      this.bubble.removeChild(this.bubbleText)
+      this.bubbleText.destroy()
+      this.bubbleText = null
+    }
+
+    const toolActive =
+      this.showingTool && performance.now() < this.toolUntil && !!this.lastStationId
+    const showBubble =
+      this.state === 'working' ||
+      this.state === 'handoff' ||
+      this.state === 'blocked' ||
+      toolActive
+    if (!showBubble) {
       this.bubble.visible = false
       return
     }
     this.bubble.visible = true
+
     const color =
       this.state === 'handoff'
         ? COLORS.statusHandoff
-        : this.state === 'working'
-          ? COLORS.statusWorking
-          : COLORS.statusIdle
-    // hard-offset pixel panel per DESIGN.md §4.1
-    this.bubbleBg.roundRect(-16, -34, 32, 20, 4).fill(color)
-    this.bubbleBg.rect(-12, -15, 24, 3).fill(color)
-    this.bubbleBg.stroke({ width: 2, color: COLORS.ink })
-    // tail points down to avatar
-    this.bubbleBg.moveTo(-4, -15).lineTo(0, -10).lineTo(4, -15).fill(color)
+        : this.state === 'blocked'
+          ? COLORS.statusBlocked
+          : this.state === 'working'
+            ? COLORS.statusWorking
+            : COLORS.statusIdle
+
+    let text = null
+    if (toolActive && !this.summary) {
+      text = STATIONS.find((s) => s.id === this.lastStationId)?.tool || null
+    } else if (this.summary) {
+      text = this.summary
+    }
+
+    if (text) {
+      const wrapped = wrapText(text, 24, 2)
+      this.bubbleText = new Text({
+        text: wrapped,
+        style: {
+          fontFamily: '"Pixelify Sans", monospace',
+          fontSize: 12,
+          lineHeight: 14,
+          fill: COLORS.ink,
+        },
+      })
+      this.bubbleText.anchor.set(0.5, 1)
+      const w = Math.max(52, this.bubbleText.width + 16)
+      const h = this.bubbleText.height + 12
+      this.bubbleBg.roundRect(-w / 2, -h - 18, w, h, 4).fill(color)
+      this.bubbleBg.roundRect(-w / 2, -h - 18, w, h, 4).stroke({ width: 2, color: COLORS.ink })
+      this.bubbleBg.moveTo(-4, -19).lineTo(0, -11).lineTo(4, -19).fill(color)
+      this.bubble.addChild(this.bubbleText)
+      this.bubbleText.position.set(0, -23)
+    } else {
+      this.bubbleBg.roundRect(-16, -36, 32, 20, 4).fill(color)
+      this.bubbleBg.roundRect(-16, -36, 32, 20, 4).stroke({ width: 2, color: COLORS.ink })
+      this.bubbleBg.moveTo(-4, -17).lineTo(0, -10).lineTo(4, -17).fill(color)
+    }
   }
 
   drawDesk() {
@@ -324,7 +578,7 @@ class Actor {
     g.rect(-2, 24, 4, 4).fill(COLORS.woodShadow)
     // keyboard strip
     g.rect(-9, 30, 18, 3).fill(COLORS.woodDark)
-    // temporary client desks get dashed outline feel via lighter wood
+    // temporary client desks get lighter wood top edge
     if (this.meta.temporary) g.rect(-14, 6, 28, 2).fill('#EED9B0')
   }
 
@@ -332,6 +586,29 @@ class Actor {
     this.world.removeChild(this.root)
     this.root.destroy({ children: true })
   }
+}
+
+function wrapText(text, maxChars, maxLines) {
+  const words = String(text).split(/\s+/)
+  const lines = []
+  let cur = ''
+  for (const w of words) {
+    if ((cur + ' ' + w).trim().length > maxChars) {
+      lines.push(cur.trim())
+      cur = w
+      if (lines.length === maxLines) break
+    } else {
+      cur = (cur + ' ' + w).trim()
+    }
+  }
+  if (lines.length < maxLines && cur) lines.push(cur.trim())
+  if (lines.length === maxLines) {
+    const consumed = lines.join(' ').length
+    if (consumed < String(text).trim().length) {
+      lines[maxLines - 1] = lines[maxLines - 1].slice(0, Math.max(0, maxChars - 1)) + '…'
+    }
+  }
+  return lines.filter(Boolean).join('\n')
 }
 
 function shortName(name) {

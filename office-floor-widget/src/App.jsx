@@ -3,6 +3,8 @@ import { FloorScene } from './floor/FloorScene.js'
 import { useAgentStatus } from './floor/useAgentStatus.js'
 import { COLORS, WORLD, stateColor } from './floor/tokens.js'
 
+const TEAM_ID = 'company-brain'
+
 export default function App() {
   const [floorOpen, setFloorOpen] = useState(false)
 
@@ -22,13 +24,117 @@ export default function App() {
         </button>
       </header>
 
-      {/* The real AgentOS UI, exactly as today */}
-      <iframe className="agentos-frame" src="/" title="AgentOS" />
+      {/* Local chat with the Top Agent team — AgentOS ships no bundled UI,
+          so the wrapper provides its own instead of iframing "/" */}
+      <ChatPanel />
 
       {floorOpen && <FloorOverlay onClose={() => setFloorOpen(false)} />}
     </div>
   )
 }
+
+// ---- chat --------------------------------------------------------------
+
+function loadSessionId() {
+  let sid = null
+  try {
+    sid = localStorage.getItem('cb_session_id')
+  } catch {
+    /* private mode etc. */
+  }
+  if (!sid) {
+    sid = 'web-' + Math.random().toString(36).slice(2, 10)
+    try {
+      localStorage.setItem('cb_session_id', sid)
+    } catch {
+      /* ignore */
+    }
+  }
+  return sid
+}
+
+function ChatPanel() {
+  const [messages, setMessages] = useState(() => [
+    {
+      role: 'brain',
+      text: 'Chief of Staff online. Sales, clients, pricing, ideas, briefings — what do you need?',
+    },
+  ])
+  const [input, setInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const sessionRef = useRef(loadSessionId())
+  const scrollRef = useRef(null)
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages, busy])
+
+  async function send() {
+    const text = input.trim()
+    if (!text || busy) return
+    setInput('')
+    setError(null)
+    setMessages((m) => [...m, { role: 'user', text }])
+    setBusy(true)
+    try {
+      // AgentOS teams API: multipart form, stream=false -> single JSON output
+      const body = new FormData()
+      body.append('message', text)
+      body.append('stream', 'false')
+      body.append('session_id', sessionRef.current)
+      const res = await fetch(`/teams/${TEAM_ID}/runs`, { method: 'POST', body })
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
+      const data = await res.json()
+      const reply =
+        (typeof data?.content === 'string' && data.content) ||
+        '(no content returned)'
+      setMessages((m) => [...m, { role: 'brain', text: reply }])
+    } catch (e) {
+      setError(e?.message ? String(e.message) : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="chat-panel">
+      <div className="chat-scroll" ref={scrollRef}>
+        {messages.map((m, i) => (
+          <div key={i} className={`msg ${m.role}`}>
+            {m.text}
+          </div>
+        ))}
+        {busy && <div className="msg brain typing">thinking…</div>}
+      </div>
+      {error && <div className="chat-error">⚠ {error}</div>}
+      <footer className="composer">
+        <textarea
+          value={input}
+          rows={2}
+          placeholder="Talk to your Chief of Staff…  (Enter to send)"
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              send()
+            }
+          }}
+        />
+        <button
+          className="send-btn"
+          onClick={send}
+          disabled={busy || !input.trim()}
+        >
+          Send
+        </button>
+      </footer>
+    </main>
+  )
+}
+
+// ---- office floor overlay ----------------------------------------------
 
 function FloorOverlay({ onClose }) {
   const { connected, snapshot } = useAgentStatus()
@@ -54,11 +160,6 @@ function FloorOverlay({ onClose }) {
   useEffect(() => {
     if (sceneRef.current && snapshot) sceneRef.current.applySnapshot(snapshot)
   }, [snapshot])
-
-  // feed live state events straight into the scene (bypasses React re-render
-  // for animation smoothness — we subscribe again at the socket layer? No:
-  // useAgentStatus already mirrors events into the snapshot, which flows here.
-  // Handoff envelopes are driven from the mirrored state diff below.)
 
   const entries = useMemo(
     () => [...(snapshot?.agents || []), ...(snapshot?.clients || [])],

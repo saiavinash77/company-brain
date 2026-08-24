@@ -38,9 +38,9 @@ function hairStyle(variant, x, y) {
   }
 }
 
-export function makeAvatarTexture(agent, scale = 4) {
+export function makeAvatarTexture(agent, scale = 4, withLegs = true) {
   const W = 22
-  const H = 30
+  const H = withLegs ? 30 : 24
   const canvas = document.createElement('canvas')
   canvas.width = W * scale
   canvas.height = H * scale
@@ -84,12 +84,15 @@ export function makeAvatarTexture(agent, scale = 4) {
   P(3, 21, 2, 2, skin)
   P(17, 21, 2, 2, skin)
 
-  // legs / base
-  P(6, 23, 4, 5, COLORS.outfitBase)
-  P(12, 23, 4, 5, COLORS.outfitBase)
-  // shoes
-  P(6, 28, 4, 1, COLORS.ink)
-  P(12, 28, 4, 1, COLORS.ink)
+  // legs / base — baked only into the full portrait; floor actors request
+  // withLegs=false and draw animated legs themselves (walk cycle).
+  if (withLegs) {
+    P(6, 23, 4, 5, COLORS.outfitBase)
+    P(12, 23, 4, 5, COLORS.outfitBase)
+    // shoes
+    P(6, 28, 4, 1, COLORS.ink)
+    P(12, 28, 4, 1, COLORS.ink)
+  }
 
   return canvas
 }

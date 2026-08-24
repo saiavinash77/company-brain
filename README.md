@@ -45,3 +45,5 @@ See `example.env`. Minimum for local chat: `GOOGLE_API_KEY`. Add `GROQ_API_KEY` 
 - Deprecated `gemini-1.5-pro`/`2.0-flash` model IDs → `gemini-2.5-flash` — fixed
 - WhatsApp webhook now mounts on the AgentOS app (single port) instead of needing a second server — fixed
 - Added `app/chat.py` — local terminal chat with the Top Agent, no Docker/Postgres required
+- `/floor` rendered blank: vite `base: './'` emitted relative asset URLs, and agno's TrailingSlashMiddleware strips the trailing slash so the browser resolved them to `/assets/*` (404). Fixed with `base: '/floor/'`
+- `http://localhost:8000/` showed only AgentOS's JSON descriptor, and agno overrides conflicting custom routes (observed with `/health`) — the landing page at `/` is now served via a pure-ASGI middleware and includes a built-in chat panel wired to `POST /teams/company-brain/runs`

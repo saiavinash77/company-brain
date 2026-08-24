@@ -45,6 +45,9 @@ export const COLORS = {
   statusIdle: '#A899B5',
   statusWorking: '#FFD93D',
   statusHandoff: '#4ECDC4',
+  statusWaiting: '#6C8EF5',
+  statusBlocked: '#FF6B6B',
+  statusSuccess: '#6BCF7F',
 }
 
 // World size must match backend floor_config FLOOR_META.
@@ -55,5 +58,8 @@ export const WALK_SPEED = 80 // px/s, per DESIGN.md §8
 export function stateColor(state) {
   if (state === 'working') return COLORS.statusWorking
   if (state === 'handoff') return COLORS.statusHandoff
+  if (state === 'waiting') return COLORS.statusWaiting
+  if (state === 'blocked') return COLORS.statusBlocked
+  if (state === 'success') return COLORS.statusSuccess
   return COLORS.statusIdle
 }
