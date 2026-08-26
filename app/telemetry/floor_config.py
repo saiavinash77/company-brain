@@ -12,6 +12,12 @@ palette (coral/mint/sky/lemon/lilac/peach) rotated across specialists.
 TOP_ACCENT = "#6E1423"      # brand maroon — the Chief of Staff
 TOP_GOLD = "#F4D35E"        # gold — highlights / CTA
 
+# The Boss's cabin: Top Agent sits here, apart from the crew.
+BOSS_CABIN = {"x": 480, "y": 60}
+
+# The conference table where the Chief gathers specialists for delegation.
+CONFERENCE_TABLE = {"x": 480, "y": 330}
+
 AGENT_FLOOR_MAP: list[dict] = [
     {
         "agent_id": "top_agent",
@@ -19,7 +25,7 @@ AGENT_FLOOR_MAP: list[dict] = [
         "role": "Chief of Staff",
         "accent": TOP_ACCENT,
         "accent_alt": TOP_GOLD,
-        "desk": {"x": 480, "y": 250},
+        "desk": BOSS_CABIN,
     },
     # Upper arc (research & thinking wing)
     {

@@ -216,5 +216,29 @@ export function drawDecor(world) {
   d.rect(430, 538, 100, 14).fill('#C9803A')
   d.rect(430, 538, 100, 14).stroke({ width: 2, color: '#8A5423' })
 
+  // conference table (center of the room — the Chief gathers the crew here)
+  const tx = 480, ty = 330
+  // chairs around it
+  const chair = (cx, cy) => {
+    d.roundRect(cx - 7, cy - 6, 14, 12, 3).fill(COLORS.maroonDeep)
+    d.roundRect(cx - 7, cy - 6, 14, 4, 2).fill('#8A1F31')
+  }
+  chair(tx - 46, ty + 8)
+  chair(tx + 46, ty + 8)
+  chair(tx, ty + 40)
+  chair(tx - 30, ty - 26)
+  chair(tx + 30, ty - 26)
+  // oval table
+  d.circle(tx, ty, 34).fill(COLORS.woodLight)
+  d.circle(tx, ty, 34).stroke({ width: 3, color: COLORS.woodShadow })
+  d.circle(tx, ty, 24).fill(COLORS.paper)
+  // gold folder + coffee cups on top
+  d.roundRect(tx - 10, ty - 6, 20, 12, 2).fill(COLORS.gold)
+  d.rect(tx - 10, ty - 2, 20, 3).fill('#F8E28A')
+  d.circle(tx - 22, ty + 8, 4).fill('#FFFFFF')
+  d.circle(tx - 22, ty + 8, 3).fill('#6B4A2B')
+  d.circle(tx + 24, ty - 4, 4).fill('#FFFFFF')
+  d.circle(tx + 24, ty - 4, 3).fill('#6B4A2B')
+
   world.addChildAt(d, 1) // above floor tiles, below actors
 }

@@ -13,6 +13,9 @@ import { makeAvatarTexture } from './portrait.js'
 import { Envelope } from './Envelope.js'
 import { STATIONS, pickStation, artifactFor, drawArtifact, drawDecor } from './stations.js'
 
+// Conference table world position — keep in sync with the backend floor_config.
+const CONFERENCE_TABLE = { x: 480, y: 330 }
+
 const TILE = 32
 
 export class FloorScene {
@@ -93,10 +96,24 @@ export class FloorScene {
       const target = ev.target_agent_id ? this.actors.get(ev.target_agent_id) : null
       if (target) {
         actor.faceTowards(target.deskPoint())
+        // BOSS DIRECTS: Chief walks to the conference table; specialist
+        // receives the envelope at the table too — a real gathering.
+        const boss = ev.agent_id === 'top_agent'
+        const table = CONFERENCE_TABLE
+        if (boss) {
+          actor.summonTo(table.x, table.y - 40)
+          target.summonTo(table.x + 70, table.y - 10)
+        }
         target.receiveHandoff()
-        this.spawnEnvelope(actor.deskPoint(), target.deskPoint(), {
+        this.spawnEnvelope(actor.deskPoint(), boss ? { x: table.x + 70, y: table.y - 24 } : target.deskPoint(), {
           fromName: actor.meta.name,
           toName: target.meta.name,
+        })
+        this.callbacks.onToast?.({
+          fromName: actor.meta.name,
+          toName: target.meta.name,
+          summary: ev.task_summary || 'delegation',
+          kind: 'handoff',
         })
       }
     }
@@ -417,6 +434,16 @@ class Actor {
     this.sprite.scale.x = Math.abs(this.sprite.scale.x) * this.facing
   }
 
+  /** Walk to a summoned point (conference table), linger, then return to desk. */
+  summonTo(x, y) {
+    this.route = [{ x, y }]
+    this.summonedAt = { x, y }
+    if (!this.state || this.state === 'idle') {
+      this.state = 'handoff'
+      this.redrawBubble()
+    }
+  }
+
   receiveHandoff() {
     this.talkUntil = performance.now() + 1400
     this.state = 'handoff'
@@ -492,6 +519,18 @@ class Actor {
       this.showingTool = true
       this.toolUntil = performance.now() + 2800
       this.redrawBubble()
+    }
+    if (this.summonedAt && Math.hypot(this.x - this.summonedAt.x, this.y - this.summonedAt.y) < 6) {
+      // arrived at the conference table — linger, then head home
+      const here = this.summonedAt
+      this.summonedAt = null
+      setTimeout(() => {
+        if (this.state === 'handoff') {
+          this.route = [{ x: this.homeX, y: this.homeY }]
+          this.state = 'idle'
+          this.redrawBubble()
+        }
+      }, 2600)
     }
     if (this.carrying) {
       // artifact dropped onto the desk — sparkle
@@ -571,15 +610,29 @@ class Actor {
   drawDesk() {
     const g = this.deskG
     const accent = this.meta.accent || COLORS.sky
-    // monitor
-    g.roundRect(-14, 6, 28, 18, 3).fill(COLORS.woodLight)
-    g.roundRect(-14, 6, 28, 18, 3).stroke({ width: 2, color: COLORS.woodShadow })
-    g.roundRect(-10, 9, 20, 11, 2).fill(accent)
-    g.rect(-2, 24, 4, 4).fill(COLORS.woodShadow)
-    // keyboard strip
-    g.rect(-9, 30, 18, 3).fill(COLORS.woodDark)
-    // temporary client desks get lighter wood top edge
-    if (this.meta.temporary) g.rect(-14, 6, 28, 2).fill('#EED9B0')
+    if (this.meta.agent_id === 'top_agent') {
+      // BOSS CABIN — larger executive desk, gold trim, nameplate (maroon/gold)
+      g.roundRect(-30, 2, 60, 26, 4).fill(COLORS.maroonDeep)
+      g.roundRect(-30, 2, 60, 26, 4).stroke({ width: 3, color: COLORS.gold })
+      g.roundRect(-24, 8, 48, 12, 2).fill(COLORS.woodLight)
+      // dual monitors
+      g.roundRect(-24, -14, 20, 15, 2).fill('#3A3348')
+      g.roundRect(-21, -11, 14, 9, 1).fill(COLORS.gold)
+      g.roundRect(4, -14, 20, 15, 2).fill('#3A3348')
+      g.roundRect(7, -11, 14, 9, 1).fill(COLORS.mint)
+      // nameplate: THE BOSS
+      g.roundRect(-16, 32, 32, 10, 2).fill(COLORS.gold)
+    } else {
+      // monitor
+      g.roundRect(-14, 6, 28, 18, 3).fill(COLORS.woodLight)
+      g.roundRect(-14, 6, 28, 18, 3).stroke({ width: 2, color: COLORS.woodShadow })
+      g.roundRect(-10, 9, 20, 11, 2).fill(accent)
+      g.rect(-2, 24, 4, 4).fill(COLORS.woodShadow)
+      // keyboard strip
+      g.rect(-9, 30, 18, 3).fill(COLORS.woodDark)
+      // temporary client desks get lighter wood top edge
+      if (this.meta.temporary) g.rect(-14, 6, 28, 2).fill('#EED9B0')
+    }
   }
 
   destroy() {
