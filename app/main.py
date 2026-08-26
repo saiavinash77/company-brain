@@ -76,9 +76,76 @@ async def ws_agent_status(websocket: WebSocket):
         bus.unsubscribe(queue)
 
 
+@webhook_app.get("/api/agent-activity/{agent_id}")
+async def agent_activity(agent_id: str, limit: int = 15):
+    """Recent activity for one agent — live state + durable audit history."""
+    from app.config import GROQ_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY
+
+    payload = bus.snapshot(fixed_agents())
+    live = next(
+        (a for a in payload.get("agents", []) if a.get("agent_id") == agent_id), None
+    )
+    # durable audit trail (SuperMemory audit layer)
+    try:
+        history = await memory.audit.get_agent_history(agent_id, limit=limit)
+    except Exception as e:
+        logger.warning(f"audit history unavailable: {e}")
+        history = []
+    return {
+        "live": live,
+        "history": history,
+        "model": _agent_model(agent_id),
+    }
+
+
+def _agent_model(agent_id: str) -> str:
+    from app.config import GROQ_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY
+
+    if agent_id in {
+        "sales_agent", "finance_agent", "market_research_agent",
+        "strategy_agent", "briefing_agent", "negotiation_agent",
+    }:
+        return "groq/llama-3.3-70b" if GROQ_API_KEY else "gemini (fallback)"
+    if agent_id in {"legal_agent", "refinement_agent"}:
+        return "mistral-large" if MISTRAL_API_KEY else "gemini (fallback)"
+    return "gemini"
+
+
+@webhook_app.get("/api/settings-status")
+async def settings_status():
+    """Simple settings/readiness page data — which keys are set, model map."""
+    import os as _os
+
+    from app.config import (
+        DATABASE_URL, GMAIL_CLIENT_ID, GOOGLE_API_KEY, GROQ_API_KEY,
+        MISTRAL_API_KEY, TWILIO_ACCOUNT_SID,
+    )
+
+    def _set(v: str) -> bool:
+        return bool(v and v.strip())
+
+    keys = {
+        "GOOGLE_API_KEY": {"set": _set(GOOGLE_API_KEY), "label": "Google Gemini (required)"},
+        "GROQ_API_KEY": {"set": _set(GROQ_API_KEY), "label": "Groq — powers 6 specialist agents"},
+        "MISTRAL_API_KEY": {"set": _set(MISTRAL_API_KEY), "label": "Mistral — Legal & Refinement"},
+        "TWILIO_ACCOUNT_SID": {"set": _set(TWILIO_ACCOUNT_SID), "label": "Twilio WhatsApp"},
+        "GMAIL_CLIENT_ID": {"set": _set(GMAIL_CLIENT_ID), "label": "Gmail tools"},
+    }
+    missing_required = not _set(GOOGLE_API_KEY)
+    return {
+        "keys": keys,
+        "missing_required": missing_required,
+        "database": "postgres (docker)" if "postgres" in DATABASE_URL else "sqlite (local)",
+        "agents": [
+            {"agent_id": a["agent_id"], "name": a["name"], "role": a["role"],
+             "model": _agent_model(a["agent_id"])}
+            for a in fixed_agents()
+        ],
+    }
+
+
 @webhook_app.get("/api/clients")
 async def list_clients():
-    """List all active client agents and their IDs."""
     conversion = get_lead_conversion(team)
     clients = conversion.list_client_agents()
     return {

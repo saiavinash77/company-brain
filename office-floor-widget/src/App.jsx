@@ -140,11 +140,24 @@ function FloorOverlay({ onClose }) {
   const { connected, snapshot } = useAgentStatus()
   const canvasRef = useRef(null)
   const sceneRef = useRef(null)
+  const [selected, setSelected] = useState(null)       // agent meta from click
+  const [activity, setActivity] = useState(null)       // /api/agent-activity payload
+  const [showSettings, setShowSettings] = useState(false)
+  const [settings, setSettings] = useState(null)
 
   // mount pixi once
   useEffect(() => {
     let disposed = false
-    const scene = new FloorScene(canvasRef.current)
+    const scene = new FloorScene(canvasRef.current, {
+      onSelect: (meta) => {
+        setSelected(meta)
+        setActivity(null)
+        fetch(`/api/agent-activity/${meta.agent_id}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => d && setActivity(d))
+          .catch(() => {})
+      },
+    })
     sceneRef.current = scene
     scene.init().catch((e) => console.error('pixi init failed', e))
     return () => {
@@ -155,6 +168,16 @@ function FloorOverlay({ onClose }) {
       sceneRef.current = null
     }
   }, [])
+
+  // open settings lazily
+  useEffect(() => {
+    if (showSettings && !settings) {
+      fetch('/api/settings-status')
+        .then((r) => r.json())
+        .then(setSettings)
+        .catch(() => setSettings({ error: 'unavailable' }))
+    }
+  }, [showSettings, settings])
 
   // push snapshot into the scene whenever it changes
   useEffect(() => {
@@ -174,9 +197,18 @@ function FloorOverlay({ onClose }) {
             <span className={connected ? 'live-dot on' : 'live-dot'} />
             Company Brain HQ — live floor
           </h2>
-          <button className="close-btn" onClick={onClose} title="Close">
-            ✕
-          </button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button
+              className="close-btn"
+              title="Settings & status"
+              onClick={() => { setShowSettings((v) => !v); setSelected(null) }}
+            >
+              ⚙️
+            </button>
+            <button className="close-btn" onClick={onClose} title="Close">
+              ✕
+            </button>
+          </div>
         </header>
 
         <div className="canvas-wrap">
@@ -186,7 +218,19 @@ function FloorOverlay({ onClose }) {
 
         <aside className="roster">
           {entries.map((a) => (
-            <div key={a.agent_id} className={`chip ${a.temporary ? 'temp' : ''}`}>
+            <div
+              key={a.agent_id}
+              className={`chip ${a.temporary ? 'temp' : ''}`}
+              style={{ cursor: 'pointer' }}
+              onClick={() => {
+                setSelected(a)
+                setActivity(null)
+                fetch(`/api/agent-activity/${a.agent_id}`)
+                  .then((r) => (r.ok ? r.json() : null))
+                  .then((d) => d && setActivity(d))
+                  .catch(() => {})
+              }}
+            >
               <span className="chip-avatar" style={{ background: a.accent }} />
               <span className="chip-name">{a.name}</span>
               <span className="chip-state" style={{ color: stateColor(a.state || 'idle') }}>
@@ -200,6 +244,80 @@ function FloorOverlay({ onClose }) {
             </div>
           ))}
         </aside>
+
+        {showSettings && (
+          <aside className="detail-panel">
+            <h3>⚙️ Settings & status</h3>
+            {!settings ? (
+              <p className="muted">loading…</p>
+            ) : settings.error ? (
+              <p className="muted">{settings.error}</p>
+            ) : (
+              <>
+                <ul className="kv-list">
+                  {Object.entries(settings.keys).map(([k, v]) => (
+                    <li key={k}>
+                      <span className={`pill ${v.set ? 'ok' : 'missing'}`}>{v.set ? '✅ set' : '❌ not set'}</span>
+                      <span className="kv-label">{v.label}</span>
+                    </li>
+                  ))}
+                  <li>
+                    <span className="pill ok">🗄️</span>
+                    <span className="kv-label">Database: {settings.database}</span>
+                  </li>
+                  {settings.missing_required && (
+                    <li className="warn-note">⚠️ GOOGLE_API_KEY missing — add it to .env and restart Docker</li>
+                  )}
+                </ul>
+                <h4>Agent → model map</h4>
+                <ul className="kv-list small">
+                  {settings.agents.map((a) => (
+                    <li key={a.agent_id}>
+                      <span className="kv-label">{a.name}</span>
+                      <span className="mono">{a.model}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </aside>
+        )}
+
+        {selected && !showSettings && (
+          <aside className="detail-panel">
+            <h3>
+              <span className="chip-avatar" style={{ background: selected.accent }} />{' '}
+              {selected.name}
+            </h3>
+            <p className="muted">{selected.role}</p>
+            <p>
+              State: <b>{activity?.live?.state || selected.state || 'idle'}</b>
+              {' · '}Model: <b>{activity?.model || '…'}</b>
+            </p>
+            {(activity?.live?.task_summary || selected.task_summary) && (
+              <p className="task-now">
+                📌 Now: {activity?.live?.task_summary || selected.task_summary}
+              </p>
+            )}
+            <h4>Recent activity</h4>
+            {!activity ? (
+              <p className="muted">loading…</p>
+            ) : activity.history.length === 0 ? (
+              <p className="muted">no recorded activity yet</p>
+            ) : (
+              <ul className="history-list">
+                {activity.history.map((h, i) => (
+                  <li key={i}>
+                    <span className="hist-time">
+                      {(h.timestamp || '').slice(0, 16).replace('T', ' ')}
+                    </span>
+                    <span>{h.action}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </aside>
+        )}
 
         <footer className="legend">
           <LegendDot color={COLORS.statusIdle} label="idle" />
