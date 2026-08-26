@@ -2,8 +2,8 @@ import asyncio
 import json
 import logging
 import os
-from pathlib import Path
 
+import aiohttp
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -154,6 +154,60 @@ async def list_clients():
             for cid, agent in clients.items()
         ]
     }
+
+
+@webhook_app.post("/webhook/telegram")
+async def telegram_webhook(request: Request):
+    """Receive Telegram updates and route owner messages to the Top Agent.
+
+    Set once via: https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<host>/webhook/telegram
+    Only messages from TELEGRAM_CHAT_ID (the owner) are processed.
+    """
+    from app.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+    if not TELEGRAM_BOT_TOKEN:
+        return {"error": "Telegram not configured"}, 503
+
+    try:
+        update = await request.json()
+        message = update.get("message") or {}
+        chat_id = str(message.get("chat", {}).get("id", ""))
+        text = (message.get("text") or "").strip()
+
+        if not chat_id or (TELEGRAM_CHAT_ID and chat_id != str(TELEGRAM_CHAT_ID)):
+            logger.warning("Telegram update from unknown chat %s — ignored", chat_id)
+            return {"ok": True}
+        if not text:
+            return {"ok": True}
+
+        logger.info("Telegram message from owner (%s): %s", chat_id, text[:80])
+
+        full_message = f"[Telegram message from Owner]\n{text}"
+        asyncio.create_task(_process_telegram_message(full_message, chat_id))
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Telegram webhook error: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+async def _process_telegram_message(message: str, chat_id: str):
+    """Run the Top Agent on a Telegram message and reply in the same chat."""
+    from app.config import TELEGRAM_BOT_TOKEN
+
+    try:
+        response = await top_agent.arun(input=message)
+        content = getattr(response, "content", None)
+        if not content:
+            return
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        async with aiohttp.ClientSession() as session:
+            await session.post(
+                url,
+                json={"chat_id": chat_id, "text": str(content)[:4000]},
+                timeout=aiohttp.ClientTimeout(total=30),
+            )
+    except Exception as exc:
+        logger.error(f"Telegram processing error: {exc}")
 
 
 @webhook_app.post("/webhook/whatsapp")

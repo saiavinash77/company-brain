@@ -18,6 +18,7 @@ from app.memory.super_memory import SuperMemory
 from app.models.gemini_model import get_gemini_flash
 from app.providers.gmail_provider import GmailProvider
 from app.providers.memory_provider import MemoryProvider
+from app.providers.telegram_provider import TelegramProvider
 from app.providers.twilio_provider import TwilioProvider
 from app.providers.web_provider import WebProvider
 from app.workflows.lead_conversion_workflow import LeadConversionWorkflow
@@ -45,6 +46,7 @@ def create_context_providers(memory: SuperMemory) -> dict:
         WebProvider(),
         GmailProvider(),
         MemoryProvider(memory=memory),
+        TelegramProvider(),
     ]
     registry: dict = {}
     for provider in providers:

@@ -36,5 +36,12 @@ GMAIL_REFRESH_TOKEN = os.environ.get("GMAIL_REFRESH_TOKEN", "")
 AGENTOS_HOST = os.environ.get("AGENTOS_HOST", "0.0.0.0")
 AGENTOS_PORT = int(os.environ.get("AGENTOS_PORT", "8000"))
 
+# ---- OpenRouter (free-model fallback) ----
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+
+# ---- Telegram bot (owner interface, replaces WhatsApp) ----
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", os.environ.get("TELEGRAM_OWNER_ID", ""))
+
 # ---- Memory Backend ----
 MEMORY_BACKEND = os.environ.get("MEMORY_BACKEND", "local")  # "local" or "gcp"
