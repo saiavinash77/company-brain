@@ -19,7 +19,7 @@ const CONFERENCE_TABLE = { x: 480, y: 330 }
 const TILE = 32
 
 export class FloorScene {
-  constructor(canvas) {
+  constructor(canvas, callbacks = {}) {
     this.canvas = canvas
     this.app = null
     this.world = null
@@ -27,7 +27,7 @@ export class FloorScene {
     this.envelopes = []
     this.sparkles = []
     this.destroyed = false
-    this.callbacks = {} // { onSelect(meta), onToast({fromName,toName}), onMoment(text) }
+    this.callbacks = callbacks // { onSelect(meta), onToast({fromName,toName}), onMoment(text) }
   }
 
   setCallbacks(cb) {
@@ -36,14 +36,30 @@ export class FloorScene {
 
   async init() {
     this.app = new Application()
-    await this.app.init({
-      canvas: this.canvas,
-      width: WORLD.width,
-      height: WORLD.height,
-      backgroundAlpha: 0,
-      antialias: false,
-      autoDensity: true,
-    })
+    // Try WebGL first; fall back to plain canvas rendering — some embedded
+    // browsers / VMs have no working GPU context and Pixi v8 otherwise
+    // throws during init (blank overlay, no error shown).
+    for (const preference of ['webgl', 'webgl', 'canvas']) {
+      try {
+        await this.app.init({
+          canvas: this.canvas,
+          width: WORLD.width,
+          height: WORLD.height,
+          backgroundAlpha: 0,
+          antialias: false,
+          autoDensity: true,
+          preference: preference === 'canvas' ? 'canvas' : 'webgl',
+          failIfMajorPerformanceCaveat: false,
+        })
+        break
+      } catch (err) {
+        console.warn(`[floor] pixi init with ${preference} failed:`, err?.message || err)
+        if (preference === 'canvas') {
+          this.initError = String(err?.message || err)
+          throw err
+        }
+      }
+    }
     this.world = new Container()
     this.app.stage.addChild(this.world)
     drawFloor(this.world)

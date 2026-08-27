@@ -2,11 +2,13 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 
 import aiohttp
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 
 from app.config import (
     AGENTOS_HOST,
@@ -96,6 +98,49 @@ async def agent_activity(agent_id: str, limit: int = 15):
         "history": history,
         "model": _agent_model(agent_id),
     }
+
+
+@webhook_app.post("/api/chat")
+async def chat(request: Request):
+    """Run the Top Agent team on an owner message and stream the reply.
+
+    Emits live ``working`` / ``idle`` events for the Top Agent so the office
+    floor animates, then streams the team's content back as SSE.
+    """
+    from app.telemetry.agent_events import AgentEvent, STATE_IDLE, STATE_WORKING
+
+    body = await request.form()
+    message = (body.get("message") or "").strip()
+    session_id = body.get("session_id") or "web"
+    if not message:
+        return {"error": "empty message"}, 400
+
+    async def event_stream():
+        bus.publish(AgentEvent("top_agent", "Top Agent", STATE_WORKING, task_summary=message[:80]))
+        try:
+            run = team.arun(
+                input=message,
+                session_id=session_id,
+                user_id=session_id,
+                stream=True,
+            )
+            async for chunk in run:
+                content = getattr(chunk, "content", None)
+                if content:
+                    yield f"data: {json.dumps({'event': 'TeamRunContent', 'content': content})}\n\n"
+            yield f"data: {json.dumps({'event': 'TeamRunCompleted'})}\n\n"
+        except Exception as e:  # noqa: BLE001
+            logger.error("team run failed: %s", e)
+            yield f"data: {json.dumps({'event': 'TeamRunContent', 'content': f'[error] {e}'})}\n\n"
+            yield f"data: {json.dumps({'event': 'TeamRunCompleted'})}\n\n"
+        finally:
+            bus.publish(AgentEvent("top_agent", "Top Agent", STATE_IDLE, task_summary=message[:80]))
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _agent_model(agent_id: str) -> str:
@@ -362,18 +407,22 @@ def serve_webhook_only():
 
 
 def _mount_floor_ui(app) -> None:
-    """Serve office-floor-widget/dist at /floor and as the "/" landing page.
+    """Serve the two-page office-floor-widget UI:
 
-    The widget page is now self-sufficient: it provides the local chat panel
-    (talking to POST /teams/company-brain/runs) plus the Office Floor overlay
-    (talking to /ws/agent-status + /api/agent-status/snapshot). AgentOS itself
-    ships no bundled UI — its GET / returns a JSON API descriptor and it
-    OVERRIDES same-path custom routes (observed with /health), so the landing
-    page at "/" is installed via pure-ASGI middleware, which runs before
-    routing and cannot be overridden.
+    - ``/``            -> chat landing (index.html) with an "Open Office Floor" button
+    - ``/floor``       -> standalone office floor page (floor.html), its own
+                          clean WebGL context so Pixi renders reliably.
+
+    Both pages share ``/floor/assets/*`` (absolute base in the Vite build).
+    AgentOS ships no bundled UI — its GET / returns a JSON API descriptor and
+    OVERRIDES same-path custom routes, so the landing page at "/" is installed
+    via pure-ASGI middleware, which runs before routing and cannot be
+    overridden.
     """
     dist = Path(__file__).resolve().parent.parent / "office-floor-widget" / "dist"
-    if not (dist / "index.html").exists():
+    index_html = dist / "index.html"
+    floor_html = dist / "floor.html"
+    if not index_html.exists():
         logger.warning(
             "Office floor UI not built — run: cd office-floor-widget && npm install && npm run build"
         )
@@ -382,25 +431,18 @@ def _mount_floor_ui(app) -> None:
         return  # serve() and serve_webhook_only() share webhook_app
     app.state.floor_ui_mounted = True
 
+    # Static assets (js/css) shared by both pages — absolute paths under /floor/
     app.mount("/floor", StaticFiles(directory=str(dist), html=True), name="floor")
 
-    # Agno's TrailingSlashMiddleware rewrites "/floor/" -> "/floor" before
-    # routing, so StaticFiles' add-slash redirect loops forever on the bare
-    # mount path. Serve the wrapper page directly on "/floor" instead —
-    # no redirect involved; the mount above still serves /floor/assets/*.
+    # Serve the standalone floor page directly on /floor (no redirect loop).
     from fastapi.responses import FileResponse
 
     @app.get("/floor", include_in_schema=False)
     async def _floor_page():
-        return FileResponse(str(dist / "index.html"))
+        return FileResponse(str(floor_html if floor_html.exists() else index_html))
 
     class LandingPageMiddleware:
-        """Serve the widget page at "/" ahead of routing.
-
-        AgentOS registers its own GET "/" (JSON descriptor) and overrides
-        conflicting custom routes, so a plain @app.get("/") loses. Middleware
-        executes before routing and wins regardless.
-        """
+        """Serve the chat landing page at "/" ahead of routing."""
 
         def __init__(self, inner, index_html: Path):
             self.inner = inner
@@ -413,9 +455,9 @@ def _mount_floor_ui(app) -> None:
                 return
             await self.inner(scope, receive, send)
 
-    app.add_middleware(LandingPageMiddleware, index_html=dist / "index.html")
+    app.add_middleware(LandingPageMiddleware, index_html=index_html)
 
-    logger.info("Office floor UI mounted at /floor and served as / landing (from %s)", dist)
+    logger.info("Office floor UI mounted: chat at /, standalone floor at /floor (from %s)", dist)
 
 
 if __name__ == "__main__":
