@@ -35,30 +35,39 @@ export class FloorScene {
   }
 
   async init() {
-    this.app = new Application()
-    // Try WebGL first; fall back to plain canvas rendering — some embedded
-    // browsers / VMs have no working GPU context and Pixi v8 otherwise
-    // throws during init (blank overlay, no error shown).
-    for (const preference of ['webgl', 'webgl', 'canvas']) {
+    // Build a fresh Application per attempt — reusing one instance across
+    // retries throws "already initialized" in Pixi v8 and leaves a blank canvas.
+    for (const preference of ['canvas', 'webgl']) {
       try {
+        this.app = new Application()
         await this.app.init({
           canvas: this.canvas,
           width: WORLD.width,
           height: WORLD.height,
           backgroundAlpha: 0,
           antialias: false,
-          autoDensity: true,
-          preference: preference === 'canvas' ? 'canvas' : 'webgl',
+          autoDensity: false,
+          preference,
           failIfMajorPerformanceCaveat: false,
+          powerPreference: 'low-power',
         })
+        console.log(`[floor] pixi init OK with ${preference}`)
         break
       } catch (err) {
         console.warn(`[floor] pixi init with ${preference} failed:`, err?.message || err)
-        if (preference === 'canvas') {
+        try {
+          this.app?.destroy(true)
+        } catch {}
+        this.app = null
+        if (preference === 'webgl') {
           this.initError = String(err?.message || err)
           throw err
         }
       }
+    }
+    if (!this.app) {
+      this.initError = 'pixi failed to initialize'
+      throw new Error('pixi failed to initialize')
     }
     this.world = new Container()
     this.app.stage.addChild(this.world)
@@ -84,7 +93,13 @@ export class FloorScene {
       this.world.addChild(g, lbl)
     }
     this.world.sortableChildren = true
-    this.app.ticker.add((ticker) => this.tick(ticker.deltaMS / 1000))
+    this.app.ticker.add((ticker) => {
+      try {
+        this.tick(ticker.deltaMS / 1000)
+      } catch (e) {
+        console.error('[floor] tick error', e)
+      }
+    })
   }
 
   destroy() {
@@ -97,7 +112,13 @@ export class FloorScene {
 
   applySnapshot(snapshot) {
     const entries = [...(snapshot.agents || []), ...(snapshot.clients || [])]
-    for (const meta of entries) this.ensureActor(meta)
+    for (const meta of entries) {
+      try {
+        this.ensureActor(meta)
+      } catch (e) {
+        console.error('[floor] failed to create actor', meta?.agent_id, e)
+      }
+    }
     const ids = new Set(entries.map((e) => e.agent_id))
     for (const [id, actor] of this.actors) if (!ids.has(id)) this.removeActor(id)
   }
