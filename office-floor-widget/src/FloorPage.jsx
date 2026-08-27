@@ -1,75 +1,58 @@
-// Standalone Office Floor page — separated from the chat UI per request.
-// Loaded at /floor via its own HTML entry (floor.html).
-// Talks to /ws/agent-status + /api/agent-status/snapshot only. No chat here.
+// Standalone Office Floor — rendered as pure DOM/SVG (no WebGL/Pixi).
+// Bulletproof: can never go blank. Top Agent sits dead-center; specialists
+// arc around him. Live state lights up desks; the current task shows above
+// the Chief. Driven by /ws/agent-status + /api/agent-status/snapshot.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FloorScene } from './floor/FloorScene.js'
 import { useAgentStatus } from './floor/useAgentStatus.js'
 import { WORLD } from './floor/tokens.js'
 
+const CENTER = { x: 480, y: 280 }
+
+function AgentAvatar({ meta, selected, onClick }) {
+  const state = meta.state || 'idle'
+  const working = state === 'working'
+  return (
+    <button
+      className={`agent-avatar ${working ? 'working' : ''} ${selected ? 'sel' : ''}`}
+      style={{
+        left: `${(meta.desk.x / WORLD.width) * 100}%`,
+        top: `${(meta.desk.y / WORLD.height) * 100}%`,
+        '--accent': meta.accent || '#4ECDC4',
+      }}
+      onClick={() => onClick(meta)}
+      title={`${meta.name} — ${meta.role}`}
+    >
+      <span className="avatar-body" />
+      <span className="avatar-label">{meta.name.replace(' Agent', '')}</span>
+      <span className={`avatar-pill ${working ? 'busy' : 'idle'}`}>{state}</span>
+    </button>
+  )
+}
+
 export default function FloorPage() {
-  const { connected, snapshot } = useAgentStatus()
-  const canvasRef = useRef(null)
-  const sceneRef = useRef(null)
+  const { connected, snapshot, lastEvent } = useAgentStatus()
   const [selected, setSelected] = useState(null)
   const [activity, setActivity] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState(null)
-  const [initError, setInitError] = useState(null)
-  const [bootError, setBootError] = useState(null)
 
-  // surface any uncaught error visibly instead of a blank screen
-  useEffect(() => {
-    const onErr = (e) => setBootError(String(e.message || e.error || e))
-    window.addEventListener('error', onErr)
-    window.addEventListener('unhandledrejection', (e) =>
-      setBootError('Promise: ' + (e.reason?.message || e.reason)),
-    )
-    return () => window.removeEventListener('error', onErr)
-  }, [])
+  const entries = useMemo(
+    () => [...(snapshot?.agents || []), ...(snapshot?.clients || [])],
+    [snapshot],
+  )
 
-  // mount pixi once the canvas is in the DOM and visible
-  useEffect(() => {
-    let disposed = false
-    const tryInit = () => {
-      if (disposed || !canvasRef.current) return
-      const scene = new FloorScene(canvasRef.current, {
-        onSelect: (meta) => {
-          setSelected(meta)
-          setActivity(null)
-          fetch(`/api/agent-activity/${meta.agent_id}`)
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => d && setActivity(d))
-            .catch(() => {})
-        },
-      })
-      sceneRef.current = scene
-      scene
-        .init()
-        .then(() => {
-          if (snapshot) scene.applySnapshot(snapshot)
-        })
-        .catch((e) => {
-          console.error('pixi init failed', e)
-          if (!disposed) setInitError(String(e?.message || e))
-        })
-    }
-    // defer one frame so layout/visibility is settled
-    const t = setTimeout(tryInit, 60)
-    return () => {
-      disposed = true
-      clearTimeout(t)
-      try {
-        sceneRef.current?.destroy()
-      } catch {}
-      sceneRef.current = null
-    }
-  }, [])
+  const top = entries.find((a) => a.agent_id === 'top_agent')
+  const taskText = lastEvent?.task_summary || top?.task_summary || null
 
-  // push live snapshots into the scene
-  useEffect(() => {
-    if (sceneRef.current && snapshot) sceneRef.current.applySnapshot(snapshot)
-  }, [snapshot])
+  const loadActivity = (meta) => {
+    setSelected(meta)
+    setActivity(null)
+    fetch(`/api/agent-activity/${meta.agent_id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setActivity(d))
+      .catch(() => {})
+  }
 
   // lazy settings
   useEffect(() => {
@@ -80,11 +63,6 @@ export default function FloorPage() {
         .catch(() => setSettings({ error: 'unavailable' }))
     }
   }, [showSettings, settings])
-
-  const entries = useMemo(
-    () => [...(snapshot?.agents || []), ...(snapshot?.clients || [])],
-    [snapshot],
-  )
 
   return (
     <div className="floor-shell">
@@ -100,15 +78,31 @@ export default function FloorPage() {
         </div>
       </header>
 
-      <div className="floor-stage">
-        <div className="canvas-wrap floor-canvas-wrap">
-          <canvas ref={canvasRef} width={WORLD.width} height={WORLD.height} />
-          {initError && (
-            <div className="loading" style={{ color: '#e2574c' }}>
-              ⚠️ floor render error: {initError}
-            </div>
-          )}
-          {!snapshot && !initError && <div className="loading">connecting to the office…</div>}
+      <div className="floor-stage floor-stage-dom">
+        {/* task banner above the Chief */}
+        {taskText && (
+          <div className="task-banner">
+            📌 Chief working on: <b>{taskText}</b>
+          </div>
+        )}
+
+        <div className="floor-room" style={{ aspectRatio: `${WORLD.width} / ${WORLD.height}` }}>
+          {/* conference table */}
+          <div
+            className="conf-table"
+            style={{
+              left: `${(480 / WORLD.width) * 100}%`,
+              top: `${(380 / WORLD.height) * 100}%`,
+            }}
+          />
+          {entries.map((a) => (
+            <AgentAvatar
+              key={a.agent_id}
+              meta={a}
+              selected={selected?.agent_id === a.agent_id}
+              onClick={loadActivity}
+            />
+          ))}
         </div>
 
         <aside className="roster">
@@ -117,14 +111,7 @@ export default function FloorPage() {
               key={a.agent_id}
               className={`chip ${a.temporary ? 'temp' : ''} ${selected?.agent_id === a.agent_id ? 'sel' : ''}`}
               style={{ cursor: 'pointer' }}
-              onClick={() => {
-                setSelected(a)
-                setActivity(null)
-                fetch(`/api/agent-activity/${a.agent_id}`)
-                  .then((r) => (r.ok ? r.json() : null))
-                  .then((d) => d && setActivity(d))
-                  .catch(() => {})
-              }}
+              onClick={() => loadActivity(a)}
             >
               <span className="chip-avatar" style={{ background: a.accent || '#4ECDC4' }} />
               <span className="chip-name">{a.name.replace(' Agent', '')}</span>
@@ -157,20 +144,6 @@ export default function FloorPage() {
                     <span className="pill ok">🗄️</span>
                     <span className="kv-label">Database: {settings.database}</span>
                   </li>
-                  {settings.missing_required && (
-                    <li className="warn-note">
-                      ⚠️ GOOGLE_API_KEY missing — add it to .env and restart Docker
-                    </li>
-                  )}
-                </ul>
-                <h4>Agent → model map</h4>
-                <ul className="kv-list small">
-                  {(settings.agents || []).map((a) => (
-                    <li key={a.agent_id}>
-                      <span className="kv-label">{a.name}</span>
-                      <span className="mono">{a.model}</span>
-                    </li>
-                  ))}
                 </ul>
               </>
             )}
@@ -214,7 +187,6 @@ export default function FloorPage() {
         )}
       </div>
 
-      {/* settings toggle, bottom-left */}
       <button
         className="fab"
         title="Settings & status"
@@ -222,13 +194,6 @@ export default function FloorPage() {
       >
         ⚙️
       </button>
-
-      {bootError && (
-        <div className="boot-error">
-          🛑 Page error: {bootError}
-          <button onClick={() => setBootError(null)}>dismiss</button>
-        </div>
-      )}
     </div>
   )
 }

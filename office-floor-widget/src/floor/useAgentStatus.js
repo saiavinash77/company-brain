@@ -35,9 +35,13 @@ export function useAgentStatus() {
           if (data.kind === 'snapshot') {
             setState((s) => ({ ...s, snapshot: data }))
           } else if (data.kind === 'roster') {
-            setState((s) => applyRoster(s.snapshot, data))
+            setState((s) => ({ ...s, snapshot: applyRoster(s.snapshot, data) }))
           } else if (data.kind === 'state') {
-            setState((s) => ({ ...s, snapshot: applyState(s.snapshot, data) }))
+            setState((s) => ({
+              ...s,
+              snapshot: applyState(s.snapshot, data),
+              lastEvent: { ...data },
+            }))
           }
         } catch {
           /* ignore malformed frames */
