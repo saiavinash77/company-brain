@@ -16,13 +16,13 @@ def _fallback():
     )
 
 
-def get_gemini_flash(model_id: str = "gemini-3.6-flash"):
+def get_gemini_flash(model_id: str = "gemini-2.5-flash"):
     if not GOOGLE_API_KEY:
         return _fallback()
     return Gemini(id=model_id, api_key=GOOGLE_API_KEY)
 
 
-def get_gemini_pro(model_id: str = "gemini-3.6-flash"):
+def get_gemini_pro(model_id: str = "gemini-2.5-pro"):
     if not GOOGLE_API_KEY:
         return _fallback()
     return Gemini(id=model_id, api_key=GOOGLE_API_KEY)

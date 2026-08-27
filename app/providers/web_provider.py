@@ -49,7 +49,7 @@ class WebProvider(BaseProvider):
         """
         try:
             tools = DuckDuckGoTools()
-            results = await tools.search(query, max_results=max_results)
+            results = await tools.web_search(query, max_results=max_results)
             if not results or isinstance(results, str):
                 return f"Search results for '{query}':\n{results}" if results else f"No results found for '{query}'."
             return f"Search results for '{query}':\n{str(results)}"

@@ -35,15 +35,29 @@ export class FloorScene {
   }
 
   async init() {
-    this.app = new Application()
-    await this.app.init({
-      canvas: this.canvas,
-      width: WORLD.width,
-      height: WORLD.height,
-      backgroundAlpha: 0,
-      antialias: false,
-      autoDensity: true,
-    })
+    let lastErr = null
+    for (const preference of ['webgl', 'canvas']) {
+      try {
+        this.app = new Application()
+        await this.app.init({
+          canvas: this.canvas,
+          width: WORLD.width,
+          height: WORLD.height,
+          backgroundAlpha: 0,
+          antialias: false,
+          autoDensity: true,
+          preference,
+        })
+        break
+      } catch (err) {
+        lastErr = err
+        console.warn('[floor] pixi init with', preference, 'failed:', err?.message || err)
+        try { this.app?.destroy(true) } catch {}
+        this.app = null
+        if (preference === 'canvas') this.initError = String(err?.message || err)
+      }
+    }
+    if (!this.app) throw lastErr || new Error('pixi failed to initialize')
     this.world = new Container()
     this.app.stage.addChild(this.world)
     drawFloor(this.world)

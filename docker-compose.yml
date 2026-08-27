@@ -1,0 +1,36 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-companybrain}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-companybrain}
+      POSTGRES_DB: ${POSTGRES_DB:-companybrain}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-companybrain}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Load local .env if present
+      ${ENV_FILE}
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+      - ./office-floor-widget:/app/office-floor-widget
+    restart: unless-stopped
+
+volumes:
+  pgdata:

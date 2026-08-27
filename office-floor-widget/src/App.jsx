@@ -145,25 +145,36 @@ function FloorOverlay({ onClose }) {
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState(null)
 
-  // mount pixi once
+  // mount pixi once the canvas is in the DOM and visible
   useEffect(() => {
     let disposed = false
-    const scene = new FloorScene(canvasRef.current, {
-      onSelect: (meta) => {
-        setSelected(meta)
-        setActivity(null)
-        fetch(`/api/agent-activity/${meta.agent_id}`)
-          .then((r) => (r.ok ? r.json() : null))
-          .then((d) => d && setActivity(d))
-          .catch(() => {})
-      },
-    })
-    sceneRef.current = scene
-    scene.init().catch((e) => console.error('pixi init failed', e))
+    const tryInit = () => {
+      if (disposed || !canvasRef.current) return
+      const scene = new FloorScene(canvasRef.current, {
+        onSelect: (meta) => {
+          setSelected(meta)
+          setActivity(null)
+          fetch(`/api/agent-activity/${meta.agent_id}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => d && setActivity(d))
+            .catch(() => {})
+        },
+      })
+      sceneRef.current = scene
+      scene
+        .init()
+        .then(() => {
+          if (!disposed && snapshot) scene.applySnapshot(snapshot)
+        })
+        .catch((e) => console.error('pixi init failed', e))
+    }
+    // defer one frame so layout/visibility is settled (fixes blank overlay)
+    const t = setTimeout(tryInit, 60)
     return () => {
       disposed = true
+      clearTimeout(t)
       try {
-        scene.destroy()
+        sceneRef.current?.destroy()
       } catch {}
       sceneRef.current = null
     }
