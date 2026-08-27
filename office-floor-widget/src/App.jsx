@@ -5,6 +5,55 @@ import { COLORS, WORLD, stateColor } from './floor/tokens.js'
 
 const TEAM_ID = 'company-brain'
 
+// Role-based professional outfit colors (mirror portrait.js ROLE_OUTFITS)
+const ROLE_SUIT = {
+  top_agent: '#6E1423',
+  sales_agent: '#2F4B7C',
+  legal_agent: '#2B2B33',
+  finance_agent: '#1F3A5F',
+  negotiation_agent: '#6B2737',
+  strategy_agent: '#3C6E47',
+  market_research_agent: '#2C7A78',
+  briefing_agent: '#5B4B8A',
+  refinement_agent: '#C25B4E',
+  onboarding_agent: '#3A6EA5',
+}
+
+// DOM fallback: guaranteed-visible floor if Pixi ever fails to render.
+// Shows the same avatars at their desks, dressed per role, no WebGL needed.
+function FloorFallback({ entries, onSelect }) {
+  return (
+    <div
+      className="floor-fallback"
+      style={{ aspectRatio: `${WORLD.width} / ${WORLD.height}` }}
+    >
+      <div className="ff-table" style={{ left: '50%', top: `${(330 / WORLD.height) * 100}%` }} />
+      {entries.map((a) => {
+        const suit = ROLE_SUIT[a.agent_id] || '#546170'
+        const working = (a.state || 'idle') === 'working'
+        return (
+          <button
+            key={a.agent_id}
+            className={`ff-agent ${working ? 'working' : ''}`}
+            style={{
+              left: `${(a.desk.x / WORLD.width) * 100}%`,
+              top: `${(a.desk.y / WORLD.height) * 100}%`,
+              '--suit': suit,
+            }}
+            onClick={() => onSelect(a)}
+            title={`${a.name} — ${a.role}`}
+          >
+            <span className="ff-head" />
+            <span className="ff-body" />
+            <span className="ff-name">{a.name.replace(' Agent', '')}</span>
+            <span className={`ff-pill ${working ? 'busy' : 'idle'}`}>{a.state || 'idle'}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function App() {
   const [floorOpen, setFloorOpen] = useState(false)
 
@@ -140,10 +189,11 @@ function FloorOverlay({ onClose }) {
   const { connected, snapshot } = useAgentStatus()
   const canvasRef = useRef(null)
   const sceneRef = useRef(null)
-  const [selected, setSelected] = useState(null)       // agent meta from click
-  const [activity, setActivity] = useState(null)       // /api/agent-activity payload
+  const [selected, setSelected] = useState(null)
+  const [activity, setActivity] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState(null)
+  const [pixiFailed, setPixiFailed] = useState(false)
 
   // mount pixi once the canvas is in the DOM and visible
   useEffect(() => {
@@ -166,7 +216,10 @@ function FloorOverlay({ onClose }) {
         .then(() => {
           if (!disposed && snapshot) scene.applySnapshot(snapshot)
         })
-        .catch((e) => console.error('pixi init failed', e))
+        .catch((e) => {
+          console.error('pixi init failed, using DOM fallback', e)
+          if (!disposed) setPixiFailed(true)
+        })
     }
     // defer one frame so layout/visibility is settled (fixes blank overlay)
     const t = setTimeout(tryInit, 60)
@@ -200,6 +253,15 @@ function FloorOverlay({ onClose }) {
     [snapshot],
   )
 
+  const openAgent = (a) => {
+    setSelected(a)
+    setActivity(null)
+    fetch(`/api/agent-activity/${a.agent_id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setActivity(d))
+      .catch(() => {})
+  }
+
   return (
     <div className="overlay-backdrop" onClick={onClose}>
       <section className="floor-panel pixel-panel" onClick={(e) => e.stopPropagation()}>
@@ -223,8 +285,12 @@ function FloorOverlay({ onClose }) {
         </header>
 
         <div className="canvas-wrap">
-          <canvas ref={canvasRef} width={WORLD.width} height={WORLD.height} />
-          {!snapshot && <div className="loading">connecting to the office…</div>}
+          {pixiFailed ? (
+            <FloorFallback entries={entries} onSelect={openAgent} />
+          ) : (
+            <canvas ref={canvasRef} width={WORLD.width} height={WORLD.height} />
+          )}
+          {!snapshot && !pixiFailed && <div className="loading">connecting to the office…</div>}
         </div>
 
         <aside className="roster">

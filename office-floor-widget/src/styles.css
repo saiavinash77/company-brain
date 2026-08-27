@@ -404,3 +404,63 @@ body {
   padding: 5px 0; border-bottom: 1px dashed #e4d8c4;
 }
 .hist-time { font-family: monospace; font-size: 10px; color: #8a7f72; white-space: nowrap; }
+
+/* ---- DOM fallback floor (shown only if Pixi fails) ---- */
+.floor-fallback {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  background:
+    repeating-linear-gradient(0deg, #f3e6cf 0 38px, #efe0c6 38px 40px),
+    repeating-linear-gradient(90deg, #f3e6cf 0 38px, #efe0c6 38px 40px);
+  border: 3px solid #b9863f;
+  border-radius: 10px;
+  box-shadow: inset 0 0 30px rgba(120, 80, 30, 0.12);
+  overflow: hidden;
+}
+.ff-table {
+  position: absolute;
+  width: 70px; height: 70px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 50% 40%, #fff7e6, #e7c79a);
+  border: 3px solid #8a5423; border-radius: 50%;
+  box-shadow: 0 3px 0 #8a5423;
+}
+.ff-agent {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: none; border: none; cursor: pointer; padding: 0; width: 88px;
+}
+.ff-agent .ff-head {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #E8B98F; border: 2px solid #fff;
+  box-shadow: 0 1px 0 rgba(0,0,0,.2);
+}
+.ff-agent .ff-body {
+  width: 30px; height: 30px;
+  background: var(--suit, #546170);
+  border: 3px solid #fff; border-radius: 6px 6px 4px 4px;
+  box-shadow: 0 3px 0 rgba(0,0,0,.2);
+  position: relative;
+}
+.ff-agent .ff-body::after {
+  content: ''; position: absolute; left: 50%; top: 4px; transform: translateX(-50%);
+  width: 4px; height: 14px; background: #fff; border-radius: 2px;
+}
+.ff-agent .ff-name {
+  font-size: 11px; font-weight: 700; color: #4a3a2a; text-shadow: 0 1px 0 #fff;
+  white-space: nowrap;
+}
+.ff-agent .ff-pill {
+  font-size: 9px; padding: 1px 6px; border-radius: 8px;
+  background: #cdbfa8; color: #4a3a2a;
+}
+.ff-agent.working .ff-body {
+  animation: ff-pulse 1s ease-in-out infinite;
+  box-shadow: 0 0 0 4px rgba(255,211,61,.5), 0 3px 0 rgba(0,0,0,.2);
+}
+.ff-agent.working .ff-pill { background: #ffe08a; color: #7a4a00; font-weight: 700; }
+.ff-agent:hover .ff-body { outline: 3px solid #6e1423; outline-offset: 2px; }
+@keyframes ff-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+
