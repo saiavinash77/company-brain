@@ -5,6 +5,21 @@ import { COLORS, WORLD, stateColor } from './floor/tokens.js'
 
 const TEAM_ID = 'company-brain'
 
+// Static desk layout so avatars ALWAYS render, even before the WS snapshot
+// arrives. Mirrors app/telemetry/floor_config.py.
+const DEFAULT_AGENTS = [
+  { agent_id: 'top_agent', name: 'Top Agent', role: 'Chief of Staff', accent: '#6E1423', desk: { x: 480, y: 60 }, state: 'idle' },
+  { agent_id: 'market_research_agent', name: 'Market Research Agent', role: 'research', accent: '#2C7A78', desk: { x: 345, y: 105 }, state: 'idle' },
+  { agent_id: 'briefing_agent', name: 'Briefing Agent', role: 'briefings', accent: '#5B4B8A', desk: { x: 480, y: 175 }, state: 'idle' },
+  { agent_id: 'strategy_agent', name: 'Strategy Agent', role: 'campaigns', accent: '#3C6E47', desk: { x: 615, y: 105 }, state: 'idle' },
+  { agent_id: 'refinement_agent', name: 'Refinement Agent', role: 'polish', accent: '#C25B4E', desk: { x: 750, y: 170 }, state: 'idle' },
+  { agent_id: 'sales_agent', name: 'Sales Agent', role: 'lead qualification', accent: '#2F4B7C', desk: { x: 240, y: 390 }, state: 'idle' },
+  { agent_id: 'onboarding_agent', name: 'Onboarding Agent', role: 'client setup', accent: '#3A6EA5', desk: { x: 365, y: 455 }, state: 'idle' },
+  { agent_id: 'negotiation_agent', name: 'Negotiation Agent', role: 'pricing', accent: '#6B2737', desk: { x: 480, y: 485 }, state: 'idle' },
+  { agent_id: 'finance_agent', name: 'Finance Agent', role: 'invoices', accent: '#1F3A5F', desk: { x: 595, y: 455 }, state: 'idle' },
+  { agent_id: 'legal_agent', name: 'Legal Agent', role: 'contracts', accent: '#2B2B33', desk: { x: 720, y: 390 }, state: 'idle' },
+]
+
 // Role-based professional outfit colors (mirror portrait.js ROLE_OUTFITS)
 const ROLE_SUIT = {
   top_agent: '#6E1423',
@@ -193,7 +208,7 @@ function FloorOverlay({ onClose }) {
   const [activity, setActivity] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState(null)
-  const [pixiFailed, setPixiFailed] = useState(false)
+  const [pixiReady, setPixiReady] = useState(false)
 
   // mount pixi once the canvas is in the DOM and visible
   useEffect(() => {
@@ -214,11 +229,14 @@ function FloorOverlay({ onClose }) {
       scene
         .init()
         .then(() => {
-          if (!disposed && snapshot) scene.applySnapshot(snapshot)
+          if (!disposed) {
+            setPixiReady(true)
+            if (snapshot) scene.applySnapshot(snapshot)
+          }
         })
         .catch((e) => {
-          console.error('pixi init failed, using DOM fallback', e)
-          if (!disposed) setPixiFailed(true)
+          console.error('pixi init failed, keeping DOM floor', e)
+          if (!disposed) setPixiReady(false)
         })
     }
     // defer one frame so layout/visibility is settled (fixes blank overlay)
@@ -249,7 +267,7 @@ function FloorOverlay({ onClose }) {
   }, [snapshot])
 
   const entries = useMemo(
-    () => [...(snapshot?.agents || []), ...(snapshot?.clients || [])],
+    () => [...(snapshot?.agents || DEFAULT_AGENTS), ...(snapshot?.clients || [])],
     [snapshot],
   )
 
@@ -285,12 +303,21 @@ function FloorOverlay({ onClose }) {
         </header>
 
         <div className="canvas-wrap">
-          {pixiFailed ? (
-            <FloorFallback entries={entries} onSelect={openAgent} />
-          ) : (
-            <canvas ref={canvasRef} width={WORLD.width} height={WORLD.height} />
+          {/* DOM floor is the reliable render — always visible */}
+          <FloorFallback entries={entries} onSelect={openAgent} />
+          {/* Pixi canvas layers on top ONLY if it successfully initialized */}
+          {pixiReady && (
+            <canvas
+              ref={canvasRef}
+              width={WORLD.width}
+              height={WORLD.height}
+              style={{ position: 'absolute', inset: 0, zIndex: 2 }}
+            />
           )}
-          {!snapshot && !pixiFailed && <div className="loading">connecting to the office…</div>}
+          {!snapshot && <div className="loading">connecting to the office…</div>}
+          <div className="floor-debug">
+            render: {pixiReady ? 'pixi+dom' : 'dom'} · agents: {entries.length}
+          </div>
         </div>
 
         <aside className="roster">
