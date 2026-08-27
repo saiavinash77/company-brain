@@ -29,14 +29,6 @@ AGENT_FLOOR_MAP: list[dict] = [
     },
     # Upper arc (research & thinking wing)
     {
-        "agent_id": "idea_agent",
-        "name": "Idea Agent",
-        "role": "captures raw ideas",
-        "accent": "#FF6B6B",
-        "accent_alt": "#FFB4B4",
-        "desk": {"x": 210, "y": 170},
-    },
-    {
         "agent_id": "market_research_agent",
         "name": "Market Research Agent",
         "role": "competitor & trend research",
@@ -50,7 +42,7 @@ AGENT_FLOOR_MAP: list[dict] = [
         "role": "daily & weekly briefings",
         "accent": "#B197FC",
         "accent_alt": "#D6C5FF",
-        "desk": {"x": 480, "y": 80},
+        "desk": {"x": 480, "y": 175},
     },
     {
         "agent_id": "strategy_agent",
