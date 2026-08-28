@@ -1,6 +1,6 @@
 # 🧠 Company Brain
 
-> **Your company's AI Chief of Staff.** You talk to one Boss — it runs a whole office of 10 specialist agents for you, live on a pixel-art office floor. 👩‍💼🏢
+> **Your company's AI Chief of Staff.** You talk to one Boss — it runs a whole office of 9 specialist agents for you, live on a pixel-art office floor. 👩‍💼🏢
 
 Built on [Agno Framework v2](https://github.com/agno-agi/agno) · Models: Google Gemini 🇬 + Groq Llama 3.3 ⚡ (+ optional Mistral)
 
@@ -72,13 +72,12 @@ flowchart TD
 
         subgraph BRAIN["The Brain — Agno Team (coordinate mode)"]
             TOP["👩‍💼 TOP AGENT<br/>Chief of Staff (Gemini)"]
-            subgraph SPECIALISTS["10 Specialists"]
+            subgraph SPECIALISTS["9 Specialists"]
                 S1["📈 Sales"]:::spec
                 S2["🧾 Onboarding"]:::spec
                 S3["🤝 Negotiation"]:::spec
                 S4["💰 Finance"]:::spec
                 S5["⚖️ Legal"]:::spec
-                S6["💡 Idea"]:::spec
                 S7["✍️ Refinement"]:::spec
                 S8["🔭 Research"]:::spec
                 S9["🗺️ Strategy"]:::spec
@@ -163,7 +162,6 @@ flowchart TD
 | **Negotiation Agent** | 🤝 | Pricing options & deal structuring — **owner approval required** | Gemini/Groq |
 | **Finance Agent** | 💰 | Invoices, payment tracking, cashflow, overdue flags | Gemini/Groq |
 | **Legal Agent** | ⚖️ | Contract review & risk flags (risk assessment ≠ legal advice) | Gemini/Mistral |
-| **Idea Agent** | 💡 | Capture & structure raw ideas | Gemini |
 | **Refinement Agent** | ✍️ | Polish ideas into pitches, briefs, content | Gemini/Mistral |
 | **Market Research Agent** | 🔭 | Competitors, trends, benchmarks (web search) | Gemini/Groq |
 | **Strategy Agent** | 🗺️ | Campaigns, growth roadmaps, content strategy | Gemini/Groq |
@@ -210,7 +208,7 @@ app/
 ├── chat.py              # 💻 terminal chat with the Chief
 ├── config.py            # env configuration
 ├── floor.py             # office-floor landing page
-├── agents/              # 👥 the 11 agents
+├── agents/              # 👥 the 10 agents
 ├── teams/               # team wiring + instrumentation
 ├── workflows/           # lead conversion · pricing · briefing
 ├── memory/              # 🧠 SuperMemory (5 layers)
@@ -232,4 +230,4 @@ data/playbooks/          # rate cards & SOPs
 
 ---
 
-<p align="center">🧠 <i>One brain. Eleven agents. Infinite leverage.</i></p>
+<p align="center">🧠 <i>One brain. Ten agents. Infinite leverage.</i></p>

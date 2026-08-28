@@ -34,7 +34,8 @@ GMAIL_REFRESH_TOKEN = os.environ.get("GMAIL_REFRESH_TOKEN", "")
 
 # ---- AgentOS ----
 AGENTOS_HOST = os.environ.get("AGENTOS_HOST", "0.0.0.0")
-AGENTOS_PORT = int(os.environ.get("AGENTOS_PORT", "8000"))
+# Cloud Run injects PORT; AGENTOS_PORT still wins for local/compose use
+AGENTOS_PORT = int(os.environ.get("AGENTOS_PORT", os.environ.get("PORT", "8000")))
 
 # ---- OpenRouter (free-model fallback) ----
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")

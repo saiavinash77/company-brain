@@ -43,7 +43,7 @@ def test_gemini_fallback_without_groq(fresh_models, monkeypatch):
     gm, _ = fresh_models(GROQ_API_KEY="", GOOGLE_API_KEY="gkey", OPENROUTER_API_KEY="")
     m = gm.get_groq_llama()
     # Agno Gemini model carries the id we set
-    assert getattr(m, "id", "") == "gemini-3.6-flash"
+    assert getattr(m, "id", "") == "gemini-2.5-flash"
 
 
 def test_openrouter_final_fallback(fresh_models, monkeypatch):

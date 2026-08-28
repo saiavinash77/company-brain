@@ -45,7 +45,7 @@ async def test_invalid_state_ignored(bus):
 async def test_snapshot_contains_all_fixed_desks(bus):
     snap = bus.snapshot(fixed_agents())
     ids = {a["agent_id"] for a in snap["agents"]}
-    assert len(ids) == 11
+    assert len(ids) == 10  # idea_agent removed from team
     assert "top_agent" in ids
     top = next(a for a in snap["agents"] if a["agent_id"] == "top_agent")
     assert top["desk"] == {"x": 480, "y": 60}  # boss cabin

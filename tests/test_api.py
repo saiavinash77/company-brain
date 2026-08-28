@@ -37,7 +37,7 @@ def test_settings_status_keys(client):
     assert r.status_code == 200
     data = r.json()
     assert data["keys"]["GOOGLE_API_KEY"]["set"] is True  # dummy key above
-    assert "agents" in data and len(data["agents"]) == 11
+    assert "agents" in data and len(data["agents"]) == 10
 
 
 def test_settings_status_flags_missing_required(client):
@@ -45,11 +45,11 @@ def test_settings_status_flags_missing_required(client):
     assert client.get("/api/settings-status").json()["missing_required"] is False
 
 
-def test_snapshot_has_floor_and_11_agents(client):
+def test_snapshot_has_floor_and_10_agents(client):
     r = client.get("/api/agent-status/snapshot")
     assert r.status_code == 200
     data = r.json()
-    assert len(data["agents"]) == 11
+    assert len(data["agents"]) == 10
     assert "floor" in data
 
 
