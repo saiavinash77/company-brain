@@ -299,6 +299,7 @@ def serve():
     """Start the Company Brain via AgentOS with webhook support."""
     from agno.db.postgres import PostgresDb
     from agno.knowledge import Knowledge
+    from agno.knowledge.embedder.google import GeminiEmbedder
     from agno.vectordb.pgvector import PgVector
     from agno.os import AgentOS as AgnoAgentOS  # alias: plain "os" would shadow the os module
 
@@ -311,11 +312,14 @@ def serve():
     )
     db = PostgresDb(db_url=db_url)
 
-    # Build knowledge base (uses PgVector for semantic search)
+    # Build knowledge base (uses PgVector for semantic search).
+    # PgVector defaults to OpenAIEmbedder, which needs OPENAI_API_KEY we
+    # don't have — point it at Gemini's embedding model instead.
     knowledge = Knowledge(
         vector_db=PgVector(
             table_name="company_brain_knowledge",
             db_url=db_url,
+            embedder=GeminiEmbedder(),
         ),
     )
 
