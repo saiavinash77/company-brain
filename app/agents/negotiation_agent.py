@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.gemini_model import get_gemini_pro
+from app.models.groq_model import get_groq_llama
 
 
 NEGOTIATION_AGENT_INSTRUCTIONS = [
@@ -62,7 +62,7 @@ def create_negotiation_agent() -> Agent:
     return Agent(
         name="Negotiation Agent",
         role="Structure pricing options, protect margins, and ensure owner approval on all deals",
-        model=get_gemini_pro(),
+        model=get_groq_llama(),
         instructions=NEGOTIATION_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         add_memories_to_context=True,

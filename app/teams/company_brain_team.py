@@ -14,7 +14,7 @@ from app.agents.strategy_agent import create_strategy_agent
 from app.agents.top_agent import create_top_agent
 from app.agents.briefing_agent import create_briefing_agent
 from app.memory.super_memory import SuperMemory
-from app.models.gemini_model import get_gemini_flash
+from app.models.groq_model import get_groq_llama
 from app.providers.gmail_provider import GmailProvider
 from app.providers.memory_provider import MemoryProvider
 from app.providers.telegram_provider import TelegramProvider
@@ -121,7 +121,7 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
     team = Team(
         name="Company Brain",
         id="company-brain",
-        model=get_gemini_flash(),
+        model=get_groq_llama(),
         mode=TeamMode.coordinate,
         members=[
             top_agent,

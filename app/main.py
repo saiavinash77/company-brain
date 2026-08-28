@@ -100,16 +100,12 @@ async def agent_activity(agent_id: str, limit: int = 15):
 
 
 def _agent_model(agent_id: str) -> str:
-    from app.config import GROQ_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY
+    from app.config import GROQ_API_KEY
 
-    if agent_id in {
-        "sales_agent", "finance_agent", "market_research_agent",
-        "strategy_agent", "briefing_agent", "negotiation_agent",
-    }:
-        return "groq/gpt-oss-120b" if GROQ_API_KEY else "gemini (fallback)"
-    if agent_id in {"legal_agent", "refinement_agent"}:
-        return "mistral-large" if MISTRAL_API_KEY else "gemini (fallback)"
-    return "gemini"
+    # Every agent rides Groq's gpt-oss-120b now — free-tier Gemini was
+    # taking 20-50s per call and Mistral ~70s; Groq answers in ~1s.
+    # Gemini remains the coded fallback in get_groq_llama().
+    return "groq/gpt-oss-120b" if GROQ_API_KEY else "gemini (fallback)"
 
 
 @webhook_app.get("/api/settings-status")
@@ -127,8 +123,8 @@ async def settings_status():
 
     keys = {
         "GOOGLE_API_KEY": {"set": _set(GOOGLE_API_KEY), "label": "Google Gemini (required)"},
-        "GROQ_API_KEY": {"set": _set(GROQ_API_KEY), "label": "Groq — powers 6 specialist agents"},
-        "MISTRAL_API_KEY": {"set": _set(MISTRAL_API_KEY), "label": "Mistral — Legal & Refinement"},
+        "GROQ_API_KEY": {"set": _set(GROQ_API_KEY), "label": "Groq — powers all agents (fast inference)"},
+        "MISTRAL_API_KEY": {"set": _set(MISTRAL_API_KEY), "label": "Mistral (currently unused — agents moved to Groq)"},
         "TWILIO_ACCOUNT_SID": {"set": _set(TWILIO_ACCOUNT_SID), "label": "Twilio WhatsApp"},
         "GMAIL_CLIENT_ID": {"set": _set(GMAIL_CLIENT_ID), "label": "Gmail tools"},
     }

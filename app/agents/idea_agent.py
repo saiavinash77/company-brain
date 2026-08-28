@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.gemini_model import get_gemini_flash
+from app.models.groq_model import get_groq_llama
 
 
 IDEA_AGENT_INSTRUCTIONS = [
@@ -53,7 +53,7 @@ def create_idea_agent() -> Agent:
     return Agent(
         name="Idea Agent",
         role="Captures, structures, and evaluates raw ideas into actionable formats",
-        model=get_gemini_flash(),
+        model=get_groq_llama(),
         instructions=IDEA_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         markdown=True,

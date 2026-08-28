@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.mistral_model import get_mistral_large
+from app.models.groq_model import get_groq_llama
 
 
 REFINEMENT_AGENT_INSTRUCTIONS = [
@@ -70,7 +70,7 @@ def create_refinement_agent() -> Agent:
     return Agent(
         name="Refinement Agent",
         role="Refines raw ideas and drafts into polished pitches, briefs, and professional content",
-        model=get_mistral_large(),
+        model=get_groq_llama(),
         instructions=REFINEMENT_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         markdown=True,

@@ -1,4 +1,6 @@
-"""OpenRouter models — free-tier LLMs with Gemini-class capability.
+"""LLM workhorse helpers — Groq powers every agent (free-tier Gemini was
+taking 20-50s per call; Groq answers in ~1s), with OpenRouter as a
+quota-free safety net.
 
 OpenRouter exposes an OpenAI-compatible API, so Agno's OpenAIChat client
 works with base_url=https://openrouter.ai/api/v1.

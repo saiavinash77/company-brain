@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.gemini_model import get_gemini_flash
+from app.models.groq_model import get_groq_llama
 
 ONBOARDING_STEPS = [
     "1. Kickoff meeting scheduled — confirm date/time with client",
@@ -51,7 +51,7 @@ def create_onboarding_agent() -> Agent:
     return Agent(
         name="Onboarding Agent",
         role="Manage new client onboarding: checklists, credential gathering, vault setup, and handoff to Client Agent",
-        model=get_gemini_flash(),
+        model=get_groq_llama(),
         instructions=ONBOARDING_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         add_memories_to_context=True,

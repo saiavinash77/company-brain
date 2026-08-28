@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.gemini_model import get_gemini_pro
+from app.models.groq_model import get_groq_llama
 
 
 TOP_AGENT_INSTRUCTIONS = [
@@ -85,7 +85,7 @@ def create_top_agent() -> Agent:
     return Agent(
         name="Top Agent",
         role="Chief of Staff — orchestrates all agents and is the owner's single point of contact",
-        model=get_gemini_pro(),
+        model=get_groq_llama(),
         instructions=TOP_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         add_memories_to_context=True,
