@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
@@ -37,6 +38,14 @@ VALID_STATES = {STATE_IDLE, STATE_WORKING, STATE_HANDOFF}
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _safe_put(q: asyncio.Queue, payload: dict) -> None:
+    """put_nowait on the subscriber's own loop; drop on overflow."""
+    try:
+        q.put_nowait(payload)
+    except asyncio.QueueFull:
+        logger.warning("Floor event queue full — dropping event %s", payload.get("state"))
 
 
 @dataclass
@@ -63,15 +72,22 @@ class AgentEvent:
 
 
 class AgentActivityBus:
-    """In-process pub/sub for live agent status + the current snapshot."""
+    """In-process pub/sub for live agent status + the current snapshot.
+
+    Thread-safe: AgentOS executes team runs on a background ThreadPoolExecutor
+    (``team.arun(background=True)``), so member instrumentation publishes from
+    worker threads. Subscribers record the loop they were created on and
+    payloads are handed to that loop via ``call_soon_threadsafe``.
+    """
 
     def __init__(self, max_queue: int = 256):
         self._states: dict[str, dict] = {}          # latest event per agent
         self._roster: dict[str, dict] = {}          # dynamic client desks
         self._run_depth: dict[str, int] = {}        # reentrancy per agent
         self._active_stack: list[tuple[str, str]] = []  # [(agent_id, name)]
-        self._subscribers: set[asyncio.Queue] = set()
+        self._subscribers: dict[asyncio.Queue, asyncio.AbstractEventLoop | None] = {}
         self._max_queue = max_queue
+        self._lock = threading.Lock()
 
     # -- publishing ----------------------------------------------------
 
@@ -79,18 +95,30 @@ class AgentActivityBus:
         if event.state not in VALID_STATES:
             logger.warning("Ignoring invalid agent state '%s'", event.state)
             return
-        self._states[event.agent_id] = event.to_dict()
-        self._broadcast(event.to_dict())
+        payload = event.to_dict()
+        with self._lock:
+            self._states[event.agent_id] = payload
+        self._broadcast(payload)
 
     def _broadcast(self, payload: dict) -> None:
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
         dead = []
-        for q in self._subscribers:
+        with self._lock:
+            subscribers = list(self._subscribers.items())
+        for q, loop in subscribers:
+            target = loop if loop is not None else running
             try:
-                q.put_nowait(payload)
+                if target is None or target is running:
+                    q.put_nowait(payload)
+                else:
+                    target.call_soon_threadsafe(_safe_put, q, payload)
             except asyncio.QueueFull:
                 dead.append(q)  # slow consumer — drop it rather than block agents
             except Exception:
-                dead.append(q)
+                dead.append(q)  # closed loop or dead queue
         for q in dead:
             self.unsubscribe(q)
 
@@ -98,43 +126,52 @@ class AgentActivityBus:
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=self._max_queue)
-        self._subscribers.add(q)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        with self._lock:
+            self._subscribers[q] = loop
         return q
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
-        self._subscribers.discard(q)
+        with self._lock:
+            self._subscribers.pop(q, None)
 
     # -- dynamic client desks ---------------------------------------------
 
     def roster_add(self, agent: dict) -> None:
         entry = {**agent, "temporary": True}
-        self._roster[agent["agent_id"]] = entry
+        with self._lock:
+            self._roster[agent["agent_id"]] = entry
         self._broadcast({"kind": "roster", "action": "add", "agent": entry, "timestamp": _now_iso()})
         logger.info("Floor roster add: %s (%s)", agent.get("name"), agent["agent_id"])
 
     def roster_remove(self, agent_id: str) -> None:
-        if agent_id not in self._roster:
-            return
-        entry = self._roster.pop(agent_id)
-        self._states.pop(agent_id, None)
+        with self._lock:
+            if agent_id not in self._roster:
+                return
+            entry = self._roster.pop(agent_id)
+            self._states.pop(agent_id, None)
         self._broadcast({"kind": "roster", "action": "remove", "agent": entry, "timestamp": _now_iso()})
-        logger.info("Floor roster remove: %s", agent_id)
+        logger.info("Floor roster remove: %s (%s)", entry.get("name"), agent_id)
 
     # -- snapshot ----------------------------------------------------------
 
     def snapshot(self, fixed_agents: list[dict]) -> dict:
         """Full floor state: fixed desks + live states + temporary client desks."""
         agents = []
-        for meta in fixed_agents:
-            snap = dict(meta)
-            snap.update(self._states.get(meta["agent_id"], {}))
-            snap["temporary"] = False
-            agents.append(snap)
-        clients = []
-        for agent_id, meta in self._roster.items():
-            snap = dict(meta)
-            snap.update(self._states.get(agent_id, {}))
-            clients.append(snap)
+        with self._lock:
+            for meta in fixed_agents:
+                snap = dict(meta)
+                snap.update(self._states.get(meta["agent_id"], {}))
+                snap["temporary"] = False
+                agents.append(snap)
+            clients = []
+            for agent_id, meta in self._roster.items():
+                snap = dict(meta)
+                snap.update(self._states.get(agent_id, {}))
+                clients.append(snap)
         return {"agents": agents, "clients": clients, "server_time": _now_iso()}
 
 
@@ -157,71 +194,74 @@ def summarize(message) -> str:
 # Instrumentation helpers — wrap real invocation points, no framework forks.
 # ---------------------------------------------------------------------------
 
-def instrument_agent(agent, agent_id: str | None = None) -> str:
-    """Wrap an Agno Agent's run/arun to emit working/idle + handoff events.
+def _enter_run(aid: str, aname: str, summary: str) -> None:
+    with bus._lock:
+        depth = bus._run_depth.get(aid, 0)
+        bus._run_depth[aid] = depth + 1
+        src = bus._active_stack[-1] if bus._active_stack else None
+        bus._active_stack.append((aid, aname))
+    if depth == 0:
+        if src is not None and src[0] != aid:
+            bus.publish(AgentEvent(src[0], src[1], STATE_HANDOFF, target_agent_id=aid,
+                                   task_summary=summary))
+        bus.publish(AgentEvent(aid, aname, STATE_WORKING, task_summary=summary))
 
-    Handles both plain awaits and streaming calls (arun(stream=True)), and is
-    reentrancy-safe (nested/concurrent runs don't flip-flop states). Returns
-    the resolved agent_id.
+
+def _exit_run(aid: str, aname: str, summary: str) -> None:
+    with bus._lock:
+        bus._run_depth[aid] = max(0, bus._run_depth.get(aid, 1) - 1)
+        for item in reversed(bus._active_stack):
+            if item == (aid, aname):
+                bus._active_stack.remove(item)
+                break
+        done = bus._run_depth[aid] == 0
+    if done:
+        bus.publish(AgentEvent(aid, aname, STATE_IDLE, task_summary=summary))
+
+
+def instrument_agent(agent, agent_id: str | None = None) -> str:
+    """Wrap an agent-like object's run/arun to emit working/idle + handoff
+    events (used for objects that are not real Agno Agent/Team instances;
+    real ones are covered by instrument_agno_classes). Handles both plain
+    awaits and streaming calls (arun(stream=True)), and is reentrancy-safe.
     """
     aid = agent_id or slugify(getattr(agent, "name", "agent"))
     aname = getattr(agent, "name", aid)
     orig_run = getattr(agent, "run", None)
     orig_arun = getattr(agent, "arun", None)
 
-    def _enter(summary: str) -> None:
-        depth = bus._run_depth.get(aid, 0)
-        bus._run_depth[aid] = depth + 1
-        if depth == 0:
-            if bus._active_stack:
-                src_id, src_name = bus._active_stack[-1]
-                if src_id != aid:
-                    bus.publish(AgentEvent(src_id, src_name, STATE_HANDOFF, target_agent_id=aid,
-                                           task_summary=summary))
-            bus.publish(AgentEvent(aid, aname, STATE_WORKING, task_summary=summary))
-        bus._active_stack.append((aid, aname))
-
-    def _exit_ok(summary: str) -> None:
-        bus._run_depth[aid] = max(0, bus._run_depth.get(aid, 1) - 1)
-        for item in reversed(bus._active_stack):
-            if item == (aid, aname):
-                bus._active_stack.remove(item)
-                break
-        if bus._run_depth[aid] == 0:
-            bus.publish(AgentEvent(aid, aname, STATE_IDLE, task_summary=summary))
-
     def run_wrapper(*args, **kwargs):
         summary = summarize(kwargs.get("input") or (args[0] if args else ""))
-        _enter(summary)
+        _enter_run(aid, aname, summary)
         try:
             result = orig_run(*args, **kwargs)
         except Exception:
-            _exit_ok(f"error: {summary}")
+            _exit_run(aid, aname, f"error: {summary}")
             raise
-        _exit_ok(summary)
+        _exit_run(aid, aname, summary)
         return result
 
     async def arun_wrapper(*args, **kwargs):
         streaming = bool(kwargs.get("stream"))
         if not streaming:
             summary = summarize(kwargs.get("input") or (args[0] if args else ""))
-            _enter(summary)
+            _enter_run(aid, aname, summary)
             try:
                 result = await orig_arun(*args, **kwargs)
             except Exception:
-                _exit_ok(f"error: {summary}")
+                _exit_run(aid, aname, f"error: {summary}")
                 raise
-            _exit_ok(summary)
+            _exit_run(aid, aname, summary)
             return result
 
         async def stream_gen():
             summary = summarize(kwargs.get("input") or (args[0] if args else ""))
-            _enter(summary)
+            _enter_run(aid, aname, summary)
             try:
                 async for chunk in orig_arun(*args, **kwargs):
                     yield chunk
             finally:
-                _exit_ok(summary)
+                _exit_run(aid, aname, summary)
 
         return stream_gen()
 
@@ -230,6 +270,84 @@ def instrument_agent(agent, agent_id: str | None = None) -> str:
     if orig_arun is not None:
         agent.arun = arun_wrapper
     return aid
+
+
+_AGNO_CLASSES_INSTRUMENTED = False
+
+
+def instrument_agno_classes() -> None:
+    """Patch Agno Agent/Team run methods at the class level (idempotent).
+
+    AgentOS resolves the registered team per request via
+    ``get_team_by_id(create_fresh=True)``; ``team.deep_copy()`` rebuilds the
+    team and its members, stripping any instance-level wrappers. Class
+    methods survive the copy, so every deep-copied team/member — and any
+    dynamically spawned client agent — stays instrumented. The team run
+    itself is reported as top_agent: in coordinate mode the team model is
+    the boss's brain, and it anchors the handoff source for member runs.
+    """
+    global _AGNO_CLASSES_INSTRUMENTED
+    if _AGNO_CLASSES_INSTRUMENTED:
+        return
+    _AGNO_CLASSES_INSTRUMENTED = True
+
+    from agno.agent import Agent
+    from agno.team import Team
+
+    def _ids(instance) -> tuple[str, str]:
+        if isinstance(instance, Team):
+            return "top_agent", "Top Agent"
+        name = getattr(instance, "name", None) or "agent"
+        return slugify(name), name
+
+    def _wrap_arun(orig_arun):
+        async def arun_wrapper(self, *args, **kwargs):
+            aid, aname = _ids(self)
+            streaming = bool(kwargs.get("stream"))
+            if not streaming:
+                summary = summarize(kwargs.get("input") or (args[0] if args else ""))
+                _enter_run(aid, aname, summary)
+                try:
+                    result = await orig_arun(self, *args, **kwargs)
+                except Exception:
+                    _exit_run(aid, aname, f"error: {summary}")
+                    raise
+                _exit_run(aid, aname, summary)
+                return result
+
+            async def stream_gen():
+                summary = summarize(kwargs.get("input") or (args[0] if args else ""))
+                _enter_run(aid, aname, summary)
+                try:
+                    async for chunk in orig_arun(self, *args, **kwargs):
+                        yield chunk
+                finally:
+                    _exit_run(aid, aname, summary)
+
+            return stream_gen()
+
+        return arun_wrapper
+
+    def _wrap_run(orig_run):
+        def run_wrapper(self, *args, **kwargs):
+            aid, aname = _ids(self)
+            summary = summarize(kwargs.get("input") or (args[0] if args else ""))
+            _enter_run(aid, aname, summary)
+            try:
+                result = orig_run(self, *args, **kwargs)
+            except Exception:
+                _exit_run(aid, aname, f"error: {summary}")
+                raise
+            _exit_run(aid, aname, summary)
+            return result
+
+        return run_wrapper
+
+    Agent.arun = _wrap_arun(Agent.arun)
+    Agent.run = _wrap_run(Agent.run)
+    Team.arun = _wrap_arun(Team.arun)
+    Team.run = _wrap_run(Team.run)
+    logger.info("Agno Agent/Team run methods instrumented for floor events")
 
 
 def instrument_coroutine(
@@ -250,19 +368,24 @@ def instrument_coroutine(
 
     async def wrapper(*args, **kwargs):
         summary = summary_from_args(*args, **kwargs) if summary_from_args else method_name
-        depth = bus._run_depth.get(agent_id, 0)
-        bus._run_depth[agent_id] = depth + 1
+        with bus._lock:
+            depth = bus._run_depth.get(agent_id, 0)
+            bus._run_depth[agent_id] = depth + 1
         if depth == 0:
             bus.publish(AgentEvent(agent_id, agent_name, STATE_WORKING, task_summary=summary))
         try:
             result = await original(*args, **kwargs)
         except Exception:
-            bus._run_depth[agent_id] = max(0, bus._run_depth.get(agent_id, 1) - 1)
-            if bus._run_depth[agent_id] == 0:
+            with bus._lock:
+                bus._run_depth[agent_id] = max(0, bus._run_depth.get(agent_id, 1) - 1)
+                done = bus._run_depth[agent_id] == 0
+            if done:
                 bus.publish(AgentEvent(agent_id, agent_name, STATE_IDLE, task_summary=f"error: {summary}"))
             raise
-        bus._run_depth[agent_id] = max(0, bus._run_depth.get(agent_id, 1) - 1)
-        if bus._run_depth[agent_id] == 0:
+        with bus._lock:
+            bus._run_depth[agent_id] = max(0, bus._run_depth.get(agent_id, 1) - 1)
+            done = bus._run_depth[agent_id] == 0
+        if done:
             bus.publish(AgentEvent(agent_id, agent_name, STATE_IDLE, task_summary=summary))
             if on_done:
                 on_done()

@@ -24,9 +24,9 @@ from app.workflows.lead_conversion_workflow import LeadConversionWorkflow
 from app.workflows.pricing_request_workflow import PricingRequestWorkflow
 from app.workflows.daily_briefing_workflow import DailyBriefingWorkflow
 from app.telemetry.agent_events import (
-    bus,
-    instrument_agent,
+    instrument_agno_classes,
     instrument_coroutine,
+    slugify,
 )
 from app.telemetry.floor_config import AGENT_FLOOR_MAP
 
@@ -165,21 +165,13 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
     team._daily_briefing = DailyBriefingWorkflow(memory=memory)
 
     # ---- Office-floor telemetry: instrument every real invocation point ----
-    # Member runs (covers direct runs AND coordinate-mode delegation).
-    for member in (
-        top_agent,
-        sales_agent,
-        onboarding_agent,
-        negotiation_agent,
-        finance_agent,
-        legal_agent,
-        refinement_agent,
-        market_research_agent,
-        strategy_agent,
-        briefing_agent,
-    ):
-        expected = {entry["agent_id"] for entry in AGENT_FLOOR_MAP}
-        aid = instrument_agent(member)
+    # Class-level patch covers all Agent/Team runs, including the per-request
+    # deep copies AgentOS makes of the registered team (instance wrappers
+    # would be stripped by deep_copy).
+    instrument_agno_classes()
+    expected = {entry["agent_id"] for entry in AGENT_FLOOR_MAP}
+    for member in team.members:
+        aid = slugify(member.name)
         if aid not in expected:
             logger.warning("Agent id '%s' has no desk in floor_config", aid)
 

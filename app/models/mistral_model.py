@@ -10,7 +10,7 @@ def get_mistral_large(model_id: str = "mistral-large-latest"):
     if MISTRAL_API_KEY:
         return MistralChat(id=model_id, api_key=MISTRAL_API_KEY)
     if GOOGLE_API_KEY:
-        return Gemini(id="gemini-2.5-flash", api_key=GOOGLE_API_KEY)
+        return Gemini(id="gemini-3.6-flash", api_key=GOOGLE_API_KEY)
     if OPENROUTER_API_KEY:
         from app.models.openrouter_model import get_openrouter_model
 

@@ -36,9 +36,9 @@ def get_openrouter(model_id: str = OPENROUTER_DEFAULT_MODEL) -> OpenAIChat:
     return _openrouter(model_id)
 
 
-def get_groq_llama(model_id: str = "llama-3.3-70b-versatile"):
-    """Groq Llama 3.3 70B with fallback chain:
-    Groq → Gemini → OpenRouter free."""
+def get_groq_llama(model_id: str = "openai/gpt-oss-120b"):
+    """Groq workhorse (llama-3.3-70b-versatile was retired) with fallback
+    chain: Groq → Gemini → OpenRouter free."""
     if GROQ_API_KEY:
         return OpenAIChat(
             id=model_id,
@@ -46,7 +46,7 @@ def get_groq_llama(model_id: str = "llama-3.3-70b-versatile"):
             base_url="https://api.groq.com/openai/v1",
         )
     if GOOGLE_API_KEY:
-        return Gemini(id="gemini-2.5-flash", api_key=GOOGLE_API_KEY)
+        return Gemini(id="gemini-3.6-flash", api_key=GOOGLE_API_KEY)
     if OPENROUTER_API_KEY:
         return _openrouter()
     raise ValueError(
@@ -64,7 +64,7 @@ def get_mistral_large(model_id: str = "mistral-large-latest"):
     if OPENROUTER_API_KEY:
         return _openrouter()
     if GOOGLE_API_KEY:
-        return Gemini(id="gemini-2.5-flash", api_key=GOOGLE_API_KEY)
+        return Gemini(id="gemini-3.6-flash", api_key=GOOGLE_API_KEY)
     raise ValueError(
         "No LLM key set (MISTRAL_API_KEY / OPENROUTER_API_KEY / GOOGLE_API_KEY)."
     )

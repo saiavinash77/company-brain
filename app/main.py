@@ -106,7 +106,7 @@ def _agent_model(agent_id: str) -> str:
         "sales_agent", "finance_agent", "market_research_agent",
         "strategy_agent", "briefing_agent", "negotiation_agent",
     }:
-        return "groq/llama-3.3-70b" if GROQ_API_KEY else "gemini (fallback)"
+        return "groq/gpt-oss-120b" if GROQ_API_KEY else "gemini (fallback)"
     if agent_id in {"legal_agent", "refinement_agent"}:
         return "mistral-large" if MISTRAL_API_KEY else "gemini (fallback)"
     return "gemini"

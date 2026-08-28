@@ -23,6 +23,11 @@ services:
     build: .
     container_name: company-brain-app
     restart: unless-stopped
+    # Docker Desktop's built-in resolver intermittently fails lookups
+    # (LLM API calls die with "No address associated with hostname")
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     ports:
       - "8000:8000"
     volumes:

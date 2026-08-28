@@ -35,6 +35,21 @@ async def test_publish_reaches_subscriber(bus):
 
 
 @pytest.mark.asyncio
+async def test_publish_from_worker_thread_reaches_subscriber(bus):
+    """AgentOS runs teams on a background ThreadPoolExecutor; events must
+    still reach subscribers on the main loop (call_soon_threadsafe)."""
+    q = bus.subscribe()
+
+    def worker():
+        bus.publish(AgentEvent("finance_agent", "Finance Agent", STATE_WORKING, task_summary="bg"))
+
+    await asyncio.to_thread(worker)
+    event = await asyncio.wait_for(q.get(), timeout=2)
+    assert event["agent_id"] == "finance_agent"
+    assert event["state"] == "working"
+
+
+@pytest.mark.asyncio
 async def test_invalid_state_ignored(bus):
     q = bus.subscribe()
     bus.publish(AgentEvent("sales_agent", "Sales Agent", "dancing"))

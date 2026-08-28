@@ -16,13 +16,15 @@ def _fallback():
     )
 
 
-def get_gemini_flash(model_id: str = "gemini-2.5-flash"):
+def get_gemini_flash(model_id: str = "gemini-3.6-flash"):
     if not GOOGLE_API_KEY:
         return _fallback()
     return Gemini(id=model_id, api_key=GOOGLE_API_KEY)
 
 
-def get_gemini_pro(model_id: str = "gemini-2.5-pro"):
+# gemini-2.5-pro 404s for this project and free-tier pro quota is exhausted,
+# so pro callers currently ride the latest flash; pass model_id to override.
+def get_gemini_pro(model_id: str = "gemini-3.6-flash"):
     if not GOOGLE_API_KEY:
         return _fallback()
     return Gemini(id=model_id, api_key=GOOGLE_API_KEY)

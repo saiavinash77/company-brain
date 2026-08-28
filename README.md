@@ -2,7 +2,7 @@
 
 > **Your company's AI Chief of Staff.** You talk to one Boss — it runs a whole office of 9 specialist agents for you, live on a pixel-art office floor. 👩‍💼🏢
 
-Built on [Agno Framework v2](https://github.com/agno-agi/agno) · Models: Google Gemini 🇬 + Groq Llama 3.3 ⚡ (+ optional Mistral)
+Built on [Agno Framework v2](https://github.com/agno-agi/agno) · Models: Google Gemini 🇬 + Groq GPT-OSS ⚡ (+ optional Mistral)
 
 ---
 
@@ -107,7 +107,7 @@ flowchart TD
 
     subgraph LLM["LLM Providers"]
         G["Google Gemini 🇬<br/>(all agents)"]
-        GR["⚡ Groq Llama 3.3<br/>(auto-fallback for 6 agents)"]
+        GR["⚡ Groq GPT-OSS 120B<br/>(auto-fallback for 6 agents)"]
     end
 
     U -->|"task"| FLOOR
