@@ -19,15 +19,15 @@ const CONFERENCE_TABLE = { x: 480, y: 330 }
 const TILE = 32
 
 export class FloorScene {
-  constructor(canvas) {
+  constructor(canvas, callbacks) {
     this.canvas = canvas
+    this.callbacks = callbacks || {} // { onSelect(meta), onToast(...), onMoment(text) }
     this.app = null
     this.world = null
     this.actors = new Map() // agent_id -> Actor
     this.envelopes = []
     this.sparkles = []
     this.destroyed = false
-    this.callbacks = {} // { onSelect(meta), onToast({fromName,toName}), onMoment(text) }
   }
 
   setCallbacks(cb) {

@@ -204,7 +204,7 @@ function ChatPanel() {
 // ---- office floor panel (docked beside the chat) ----------------------
 
 function FloorView() {
-  const { connected, snapshot } = useAgentStatus()
+  const { connected, snapshot, lastEvent } = useAgentStatus()
   const canvasRef = useRef(null)
   const sceneRef = useRef(null)
   const [selected, setSelected] = useState(null)
@@ -269,6 +269,12 @@ function FloorView() {
     if (sceneRef.current && snapshot) sceneRef.current.applySnapshot(snapshot)
   }, [snapshot])
 
+  // feed raw state events to the scene — this is what makes actors walk to
+  // the conference table and envelopes fly on handoffs
+  useEffect(() => {
+    if (sceneRef.current && lastEvent) sceneRef.current.onStateEvent(lastEvent)
+  }, [lastEvent])
+
   const entries = useMemo(
     () => [...(snapshot?.agents || DEFAULT_AGENTS), ...(snapshot?.clients || [])],
     [snapshot],
@@ -303,15 +309,22 @@ function FloorView() {
         <div className="canvas-wrap">
           {/* DOM floor is the reliable render — always visible */}
           <FloorFallback entries={entries} onSelect={openAgent} />
-          {/* Pixi canvas layers on top ONLY if it successfully initialized */}
-          {pixiReady && (
-            <canvas
-              ref={canvasRef}
-              width={WORLD.width}
-              height={WORLD.height}
-              style={{ position: 'absolute', inset: 0, zIndex: 2 }}
-            />
-          )}
+          {/* Pixi canvas layers on top once it initializes. It must be
+              mounted from the start: init needs the element, and the
+              element only existing after init is a chicken-and-egg that
+              left the floor static (render: dom, no walking). */}
+          <canvas
+            ref={canvasRef}
+            width={WORLD.width}
+            height={WORLD.height}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 2,
+              visibility: pixiReady ? 'visible' : 'hidden',
+              pointerEvents: pixiReady ? 'auto' : 'none',
+            }}
+          />
           {!snapshot && <div className="loading">connecting to the office…</div>}
           <div className="floor-debug">
             render: {pixiReady ? 'pixi+dom' : 'dom'} · agents: {entries.length}
