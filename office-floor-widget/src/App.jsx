@@ -69,10 +69,85 @@ function FloorFallback({ entries, onSelect }) {
   )
 }
 
+// Split-view bounds: the floor stays readable and the composer stays usable.
+const FLOOR_MIN_W = 300
+const CHAT_MIN_W = 340
+
+function loadFloorWidth() {
+  try {
+    const v = parseFloat(localStorage.getItem('cb_floor_width'))
+    return Number.isFinite(v) && v >= FLOOR_MIN_W ? v : null
+  } catch {
+    return null
+  }
+}
+
 export default function App() {
-  // Floor is visible by default: chat and live floor sit side by side so
-  // every message's effect on the team is visible while you type.
+  // Floor on the left, chat on the right, separated by a draggable handle —
+  // watch the desks react while you type, with the split sized to taste.
   const [floorOpen, setFloorOpen] = useState(true)
+  const [floorWidth, setFloorWidth] = useState(loadFloorWidth) // null = default share
+  const benchRef = useRef(null)
+  const dockRef = useRef(null)
+
+  const startResize = (e) => {
+    e.preventDefault()
+    const bench = benchRef.current?.getBoundingClientRect()
+    if (!bench || !dockRef.current) return
+    const startX = e.clientX
+    const startW = dockRef.current.getBoundingClientRect().width
+    const maxW = bench.width - CHAT_MIN_W - 12
+    let lastW = startW
+    const onMove = (ev) => {
+      lastW = Math.min(Math.max(startW + (ev.clientX - startX), FLOOR_MIN_W), maxW)
+      setFloorWidth(lastW)
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      document.body.classList.remove('split-resizing')
+      try {
+        localStorage.setItem('cb_floor_width', String(Math.round(lastW)))
+      } catch {
+        /* private mode etc. */
+      }
+    }
+    document.body.classList.add('split-resizing')
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
+
+  const resetResize = () => {
+    setFloorWidth(null)
+    try {
+      localStorage.removeItem('cb_floor_width')
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // keyboard-resize: arrow keys nudge the split (also easier to automate-test)
+  const nudgeResize = (e) => {
+    const step = e.shiftKey ? 64 : 24
+    const bench = benchRef.current?.getBoundingClientRect()
+    if (!bench || !dockRef.current) return
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    const current = dockRef.current.getBoundingClientRect().width
+    const maxW = bench.width - CHAT_MIN_W - 12
+    const next =
+      e.key === 'ArrowLeft'
+        ? Math.max(FLOOR_MIN_W, current - step)
+        : Math.min(maxW, current + step)
+    setFloorWidth(next)
+    try {
+      localStorage.setItem('cb_floor_width', String(Math.round(next)))
+    } catch {
+      /* ignore */
+    }
+  }
 
   return (
     <div className="shell">
@@ -90,11 +165,32 @@ export default function App() {
         </button>
       </header>
 
-      {/* Local chat with the Top Agent team — AgentOS ships no bundled UI,
-          so the wrapper provides its own instead of iframing "/" */}
-      <div className={`workbench ${floorOpen ? '' : 'floor-hidden'}`}>
+      <div className={`workbench ${floorOpen ? '' : 'floor-hidden'}`} ref={benchRef}>
+        {floorOpen && (
+          <>
+            <div
+              className="floor-dock"
+              ref={dockRef}
+              style={floorWidth ? { width: `${floorWidth}px` } : undefined}
+            >
+              <FloorView />
+            </div>
+            <div
+              className="split-resizer"
+              role="separator"
+              tabIndex={0}
+              aria-orientation="vertical"
+              aria-label="Resize floor and chat panels"
+              onPointerDown={startResize}
+              onKeyDown={nudgeResize}
+              onDoubleClick={resetResize}
+              title="Drag to resize — double-click to reset — ←/→ nudge"
+            />
+          </>
+        )}
+        {/* Local chat with the Top Agent team — AgentOS ships no bundled UI,
+            so the wrapper provides its own instead of iframing "/" */}
         <ChatPanel />
-        {floorOpen && <FloorView />}
       </div>
     </div>
   )

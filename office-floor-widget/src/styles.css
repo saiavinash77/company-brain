@@ -188,9 +188,9 @@ body {
   cursor: not-allowed;
 }
 
-/* ---- workbench: chat + live floor side by side ---- */
-/* Chat on the left, office floor docked on the right — send a message and
-   watch the desks react without covering the conversation. */
+/* ---- workbench: floor on the left, chat on the right ---- */
+/* The live floor sits at the left with a draggable divider: drag to give
+   either side more room, double-click the handle to reset. */
 .workbench {
   flex: 1 1 auto;
   min-height: 0;
@@ -198,23 +198,73 @@ body {
   background: var(--ink);
 }
 
+.floor-dock {
+  flex: 0 0 auto;
+  width: min(46vw, 700px);
+  min-width: 300px;
+  max-width: calc(100% - 340px);
+  display: flex;
+  min-height: 0;
+}
+
+.workbench .floor-dock .floor-panel {
+  flex: 1 1 auto;
+  width: auto;
+  max-height: 100%;
+  overflow-y: auto;
+  margin: 0;
+}
+
+.split-resizer {
+  flex: 0 0 10px;
+  cursor: col-resize;
+  background: #2a2135;
+  position: relative;
+  touch-action: none;
+}
+
+.split-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 2px; /* 6px visual bar inside a 10px hit area */
+  background: #3a2f47;
+  border-left: 2px solid #1a1423;
+  border-right: 2px solid #1a1423;
+}
+
+.split-resizer:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: -2px;
+}
+
+.split-resizer::after {
+  content: '⋮';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #8d7f96;
+  font-size: 13px;
+  letter-spacing: -2px;
+}
+
+.split-resizer:hover,
+body.split-resizing .split-resizer {
+  background: var(--gold);
+}
+
+body.split-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .workbench .chat-panel {
   flex: 1 1 auto;
   min-width: 0;
-  border-right: 2px solid #2a2135;
 }
 
 .workbench.floor-hidden .chat-panel {
   border-right: none;
-}
-
-/* Docked floor panel: fixed share of the window, scrolls on its own. */
-.workbench .floor-panel {
-  flex: 0 0 auto;
-  width: min(46vw, 700px);
-  max-height: 100%;
-  overflow-y: auto;
-  margin: 0;
 }
 
 .pixel-panel {
@@ -233,15 +283,16 @@ body {
   .workbench {
     flex-direction: column;
   }
-  .workbench .chat-panel {
-    border-right: none;
-    border-bottom: 2px solid #2a2135;
-    min-height: 45vh;
+  .split-resizer {
+    display: none;
   }
-  .workbench .floor-panel {
+  .workbench .floor-dock {
     width: 100%;
-    max-height: none;
-    border-left: none;
+    max-width: none;
+    min-height: 45vh;
+    border-bottom: 2px solid #2a2135;
+  }
+  .workbench .chat-panel {
     border-right: none;
   }
 }
