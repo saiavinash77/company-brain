@@ -188,17 +188,33 @@ body {
   cursor: not-allowed;
 }
 
-/* ---- floor overlay ---- */
-.overlay-backdrop {
-  position: fixed;
-  inset: 46px 0 0 0;
-  background: rgba(26, 20, 35, 0.55);
-  backdrop-filter: blur(2px);
+/* ---- workbench: chat + live floor side by side ---- */
+/* Chat on the left, office floor docked on the right — send a message and
+   watch the desks react without covering the conversation. */
+.workbench {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-  padding: 18px;
+  background: var(--ink);
+}
+
+.workbench .chat-panel {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-right: 2px solid #2a2135;
+}
+
+.workbench.floor-hidden .chat-panel {
+  border-right: none;
+}
+
+/* Docked floor panel: fixed share of the window, scrolls on its own. */
+.workbench .floor-panel {
+  flex: 0 0 auto;
+  width: min(46vw, 700px);
+  max-height: 100%;
+  overflow-y: auto;
+  margin: 0;
 }
 
 .pixel-panel {
@@ -208,11 +224,26 @@ body {
 }
 
 .floor-panel {
-  width: min(1060px, 96vw);
-  max-height: calc(100% - 24px);
-  overflow: auto;
   padding: 12px 14px 10px;
   position: relative;
+}
+
+/* Narrow windows: stack the floor under the chat instead of squeezing both. */
+@media (max-width: 1020px) {
+  .workbench {
+    flex-direction: column;
+  }
+  .workbench .chat-panel {
+    border-right: none;
+    border-bottom: 2px solid #2a2135;
+    min-height: 45vh;
+  }
+  .workbench .floor-panel {
+    width: 100%;
+    max-height: none;
+    border-left: none;
+    border-right: none;
+  }
 }
 
 .panel-head {

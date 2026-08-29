@@ -70,7 +70,9 @@ function FloorFallback({ entries, onSelect }) {
 }
 
 export default function App() {
-  const [floorOpen, setFloorOpen] = useState(false)
+  // Floor is visible by default: chat and live floor sit side by side so
+  // every message's effect on the team is visible while you type.
+  const [floorOpen, setFloorOpen] = useState(true)
 
   return (
     <div className="shell">
@@ -82,7 +84,7 @@ export default function App() {
         <button
           className={`floor-btn ${floorOpen ? 'is-active' : ''}`}
           onClick={() => setFloorOpen((v) => !v)}
-          title="Live agent office floor"
+          title="Show / hide the live office floor"
         >
           ▤ Office Floor
         </button>
@@ -90,9 +92,10 @@ export default function App() {
 
       {/* Local chat with the Top Agent team — AgentOS ships no bundled UI,
           so the wrapper provides its own instead of iframing "/" */}
-      <ChatPanel />
-
-      {floorOpen && <FloorOverlay onClose={() => setFloorOpen(false)} />}
+      <div className={`workbench ${floorOpen ? '' : 'floor-hidden'}`}>
+        <ChatPanel />
+        {floorOpen && <FloorView />}
+      </div>
     </div>
   )
 }
@@ -198,9 +201,9 @@ function ChatPanel() {
   )
 }
 
-// ---- office floor overlay ----------------------------------------------
+// ---- office floor panel (docked beside the chat) ----------------------
 
-function FloorOverlay({ onClose }) {
+function FloorView() {
   const { connected, snapshot } = useAgentStatus()
   const canvasRef = useRef(null)
   const sceneRef = useRef(null)
@@ -281,26 +284,21 @@ function FloorOverlay({ onClose }) {
   }
 
   return (
-    <div className="overlay-backdrop" onClick={onClose}>
-      <section className="floor-panel pixel-panel" onClick={(e) => e.stopPropagation()}>
-        <header className="panel-head">
-          <h2>
-            <span className={connected ? 'live-dot on' : 'live-dot'} />
-            Company Brain HQ — live floor
-          </h2>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <button
-              className="close-btn"
-              title="Settings & status"
-              onClick={() => { setShowSettings((v) => !v); setSelected(null) }}
-            >
-              ⚙️
-            </button>
-            <button className="close-btn" onClick={onClose} title="Close">
-              ✕
-            </button>
-          </div>
-        </header>
+    <section className="floor-panel pixel-panel">
+      <header className="panel-head">
+        <h2>
+          <span className={connected ? 'live-dot on' : 'live-dot'} />
+          Company Brain HQ — live floor
+        </h2>
+        <button
+          className="close-btn"
+          style={{ marginLeft: 'auto' }}
+          title="Settings & status"
+          onClick={() => { setShowSettings((v) => !v); setSelected(null) }}
+        >
+          ⚙️
+        </button>
+      </header>
 
         <div className="canvas-wrap">
           {/* DOM floor is the reliable render — always visible */}
@@ -429,8 +427,7 @@ function FloorOverlay({ onClose }) {
           <LegendDot color={COLORS.statusHandoff} label="handoff" />
           <span className="legend-note">client desks appear while Client Agents are active</span>
         </footer>
-      </section>
-    </div>
+    </section>
   )
 }
 
