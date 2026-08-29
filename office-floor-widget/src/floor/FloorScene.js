@@ -18,6 +18,10 @@ const CONFERENCE_TABLE = { x: 480, y: 330 }
 
 const TILE = 32
 
+// Avatar display scale — kept slightly under 1 so desks stay the anchor
+// of each station and agents read as part of the scene, not giants on it.
+const AVATAR_SCALE = 0.7
+
 export class FloorScene {
   constructor(canvas, callbacks) {
     this.canvas = canvas
@@ -280,14 +284,14 @@ class Actor {
     const tex = Texture.from(makeAvatarTexture(meta, 4, false))
     tex.source.scaleMode = 'nearest'
     this.sprite = new Sprite(tex)
-    this.sprite.scale.set(0.9)
+    this.sprite.scale.set(AVATAR_SCALE)
     this.sprite.anchor.set(0.5, 1)
 
     // animated legs (own container sharing the sprite scale)
     this.legs = new Container()
     this.legsG = new Graphics()
     this.legs.addChild(this.legsG)
-    this.legs.scale.set(0.9)
+    this.legs.scale.set(AVATAR_SCALE)
 
     // desk drawn behind/below avatar
     this.deskG = new Graphics()
@@ -297,7 +301,7 @@ class Actor {
       text: shortName(meta.name),
       style: {
         fontFamily: '"Pixelify Sans", monospace',
-        fontSize: 13,
+        fontSize: 11,
         fontWeight: '700',
         fill: COLORS.textPrimary,
         stroke: { color: COLORS.paper, width: 3 },
