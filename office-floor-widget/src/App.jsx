@@ -2,8 +2,24 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { FloorScene } from './floor/FloorScene.js'
 import { useAgentStatus } from './floor/useAgentStatus.js'
 import { COLORS, WORLD, stateColor } from './floor/tokens.js'
+import ModernChat from './ModernChat.jsx'
 
 const TEAM_ID = 'company-brain'
+
+// Which face of the app is showing: the office-floor workbench (visual)
+// or the clean modern chat (readable). The URL path wins (/chat opens the
+// clean view directly), else the last choice is remembered across reloads.
+function loadView() {
+  try {
+    if (location.pathname.replace(/\/+$/, '').endsWith('/chat')) return 'chat'
+    const v = localStorage.getItem('cb_view')
+    return v === 'chat' ? 'chat' : 'workbench'
+  } catch {
+    return 'workbench'
+  }
+}
+
+
 
 // Static desk layout so avatars ALWAYS render, even before the WS snapshot
 // arrives. Mirrors app/telemetry/floor_config.py.
@@ -83,12 +99,29 @@ function loadFloorWidth() {
 }
 
 export default function App() {
-  // Floor on the left, chat on the right, separated by a draggable handle —
-  // watch the desks react while you type, with the split sized to taste.
+  // Two faces of the same team: the pixel office-floor workbench and a
+  // clean modern chat. Switchable from the top bar, remembered per browser.
+  const [view, setView] = useState(loadView)
   const [floorOpen, setFloorOpen] = useState(true)
   const [floorWidth, setFloorWidth] = useState(loadFloorWidth) // null = default share
   const benchRef = useRef(null)
   const dockRef = useRef(null)
+
+  const switchView = (v) => {
+    setView(v)
+    try {
+      localStorage.setItem('cb_view', v)
+      // keep the URL in sync so /chat is a shareable, reloadable address
+      const want = v === 'chat' ? '/chat' : '/floor'
+      if (location.pathname !== want) history.replaceState(null, '', want)
+    } catch {
+      /* private mode etc. */
+    }
+  }
+
+  if (view === 'chat') {
+    return <ModernChat onExit={() => switchView('workbench')} />
+  }
 
   const startResize = (e) => {
     e.preventDefault()
@@ -156,13 +189,35 @@ export default function App() {
           <span className="brand-dot" />
           <span>Company Brain</span>
         </div>
-        <button
-          className={`floor-btn ${floorOpen ? 'is-active' : ''}`}
-          onClick={() => setFloorOpen((v) => !v)}
-          title="Show / hide the live office floor"
-        >
-          ▤ Office Floor
-        </button>
+        <div className="topbar-right">
+          <div className="view-switch" role="tablist" aria-label="Interface style">
+            <button
+              className={`view-tab ${view === 'workbench' ? 'is-active' : ''}`}
+              role="tab"
+              aria-selected={view === 'workbench'}
+              onClick={() => switchView('workbench')}
+              title="Office floor workbench — watch the team work"
+            >
+              ▤ Workbench
+            </button>
+            <button
+              className={`view-tab ${view === 'chat' ? 'is-active' : ''}`}
+              role="tab"
+              aria-selected={view === 'chat'}
+              onClick={() => switchView('chat')}
+              title="Clean modern chat — easy to read"
+            >
+              ✦ Chat
+            </button>
+          </div>
+          <button
+            className={`floor-btn ${floorOpen ? 'is-active' : ''}`}
+            onClick={() => setFloorOpen((v) => !v)}
+            title="Show / hide the live office floor"
+          >
+            ▤ Office Floor
+          </button>
+        </div>
       </header>
 
       <div className={`workbench ${floorOpen ? '' : 'floor-hidden'}`} ref={benchRef}>

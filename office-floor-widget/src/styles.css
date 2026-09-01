@@ -86,6 +86,48 @@ body {
   box-shadow: 1px 1px 0 var(--ink);
 }
 
+/* ---- interface switch: workbench <-> clean chat ---- */
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.view-switch {
+  display: flex;
+  border: 2px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  background: var(--maroon-deep);
+}
+
+.view-tab {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 7px 12px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--paper);
+  border: none;
+  letter-spacing: 0.4px;
+  transition: background 80ms;
+}
+
+.view-tab:first-child {
+  border-right: 2px solid var(--ink);
+}
+
+.view-tab:hover {
+  background: rgba(244, 211, 94, 0.15);
+}
+
+.view-tab.is-active {
+  background: var(--gold);
+  color: var(--maroon-deep);
+}
+
+
 /* ---- chat panel (local Top Agent chat) ---- */
 .chat-panel {
   flex: 1 1 auto;

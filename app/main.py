@@ -346,7 +346,7 @@ def serve():
 
     logger.info("WhatsApp webhook mounted at /webhook/whatsapp on the AgentOS app")
     logger.info(f"Company Brain starting on {AGENTOS_HOST}:{AGENTOS_PORT}")
-    logger.info("Chat UI available at http://localhost:8000 (landing) and http://localhost:8000/floor")
+    logger.info("Chat UI available at http://localhost:8000 (landing), http://localhost:8000/floor and http://localhost:8000/chat")
     logger.info(f"Active agents: {[m.name for m in team.members]}")
 
     agent_os.serve(agent_os_app, host=AGENTOS_HOST, port=AGENTOS_PORT)
@@ -363,15 +363,16 @@ def serve_webhook_only():
 
 
 def _mount_floor_ui(app) -> None:
-    """Serve office-floor-widget/dist at /floor and as the "/" landing page.
+    """Serve office-floor-widget/dist at /floor, /chat and as the "/" landing page.
 
-    The widget page is now self-sufficient: it provides the local chat panel
+    The widget page is self-sufficient: it provides the local chat panel
     (talking to POST /teams/company-brain/runs) plus the Office Floor overlay
-    (talking to /ws/agent-status + /api/agent-status/snapshot). AgentOS itself
-    ships no bundled UI — its GET / returns a JSON API descriptor and it
-    OVERRIDES same-path custom routes (observed with /health), so the landing
-    page at "/" is installed via pure-ASGI middleware, which runs before
-    routing and cannot be overridden.
+    (talking to /ws/agent-status + /api/agent-status/snapshot). /chat opens the
+    same SPA in its clean modern-chat face. AgentOS itself ships no bundled
+    UI — its GET / returns a JSON API descriptor and it OVERRIDES same-path
+    custom routes (observed with /health), so the landing page at "/" is
+    installed via pure-ASGI middleware, which runs before routing and cannot
+    be overridden.
     """
     dist = Path(__file__).resolve().parent.parent / "office-floor-widget" / "dist"
     if not (dist / "index.html").exists():
@@ -395,6 +396,12 @@ def _mount_floor_ui(app) -> None:
     async def _floor_page():
         return FileResponse(str(dist / "index.html"))
 
+    # Clean modern chat — same SPA, opens its "chat" face (the app reads the
+    # path). Assets are absolute under /floor/assets/*, so they load fine.
+    @app.get("/chat", include_in_schema=False)
+    async def _chat_page():
+        return FileResponse(str(dist / "index.html"))
+
     class LandingPageMiddleware:
         """Serve the widget page at "/" ahead of routing.
 
@@ -416,7 +423,7 @@ def _mount_floor_ui(app) -> None:
 
     app.add_middleware(LandingPageMiddleware, index_html=dist / "index.html")
 
-    logger.info("Office floor UI mounted at /floor and served as / landing (from %s)", dist)
+    logger.info("Office floor UI mounted at /floor and /chat, served as / landing (from %s)", dist)
 
 
 if __name__ == "__main__":
