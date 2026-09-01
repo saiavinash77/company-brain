@@ -279,6 +279,145 @@
   padding: 18px 0;
 }
 
+/* ---- attachments ---- */
+
+.mc-bubble-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.mc-filetag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  padding: 3px 9px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-attach-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px 8px;
+}
+
+.mc-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #1b1f26;
+  border: 1px solid #2b3038;
+  border-radius: 10px;
+  padding: 6px 8px 6px 10px;
+  max-width: 260px;
+  animation: mc-attach-in 0.15s ease-out;
+}
+
+.mc-attach.error {
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+@keyframes mc-attach-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.mc-attach-icon {
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+
+.mc-attach-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.mc-attach-name {
+  font-size: 12px;
+  color: #eceef1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-attach-note {
+  font-size: 10.5px;
+  color: #7c828c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-attach.error .mc-attach-note {
+  color: #fca5a5;
+}
+
+.mc-attach-x {
+  flex: 0 0 auto;
+  border: none;
+  background: rgba(255, 255, 255, 0.07);
+  color: #8a919c;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.mc-attach-x:hover {
+  background: rgba(248, 113, 113, 0.25);
+  color: #fca5a5;
+}
+
+.mc-attachbtn {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: #8a919c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.mc-attachbtn:hover {
+  color: #f4d35e;
+  background: rgba(244, 211, 94, 0.08);
+}
+
+.mc-dropzone {
+  text-align: center;
+  border: 2px dashed #f4d35e;
+  border-radius: 12px;
+  background: rgba(244, 211, 94, 0.06);
+  color: #f4d35e;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 18px 0;
+  margin-bottom: 8px;
+  animation: mc-attach-in 0.12s ease-out;
+}
+
+
 
 /* ---- main column ---- */
 

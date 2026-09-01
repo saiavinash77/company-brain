@@ -85,6 +85,70 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString()
 }
 
+// ---------------------------------------------------------------------------
+// Attachments — files are read IN THE BROWSER and their text is sent inside
+// the message. (The runs API's files[] field only reaches the model as
+// image_url/document parts, and Groq rejects document parts — so extracting
+// text client-side is the one path that works for every text-bearing file.)
+// PDFs are parsed with pdfjs; a page cap keeps giant files bounded.
+// ---------------------------------------------------------------------------
+
+const PDF_PAGE_CAP = 40
+const TEXT_CHAR_CAP = 60000
+
+const TEXT_EXT = [
+  '.txt', '.md', '.markdown', '.csv', '.tsv', '.json', '.yml', '.yaml',
+  '.xml', '.html', '.htm', '.log', '.ini', '.cfg', '.py', '.js', '.jsx',
+  '.ts', '.tsx', '.css', '.sql', '.sh', '.bat', '.java', '.c', '.cpp',
+  '.h', '.go', '.rs', '.rb', '.php',
+]
+
+function isTextFile(name, type) {
+  if (typeof type === 'string' && type.startsWith('text/')) return true
+  const lower = name.toLowerCase()
+  return TEXT_EXT.some((ext) => lower.endsWith(ext))
+}
+
+async function extractFileText(file) {
+  const name = file.name || 'file'
+  if (name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
+    const pdfjs = await import('pdfjs-dist')
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      'pdfjs-dist/build/pdf.worker.min.mjs',
+      import.meta.url,
+    ).toString()
+    const data = new Uint8Array(await file.arrayBuffer())
+    const pdf = await pdfjs.getDocument({ data }).promise
+    const pages = Math.min(pdf.numPages, PDF_PAGE_CAP)
+    let text = ''
+    for (let p = 1; p <= pages; p++) {
+      const page = await pdf.getPage(p)
+      const content = await page.getTextContent()
+      text += content.items.map((i) => i.str).join(' ') + '\n\n'
+    }
+    const more = pdf.numPages > PDF_PAGE_CAP ? ` (only first ${PDF_PAGE_CAP} of ${pdf.numPages} pages read)` : ''
+    return { name, text: text.slice(0, TEXT_CHAR_CAP).trim(), note: `PDF, ${pdf.numPages} pages${more}` }
+  }
+  if (isTextFile(name, file.type)) {
+    const raw = await file.text()
+    return { name, text: raw.slice(0, TEXT_CHAR_CAP), note: 'text' }
+  }
+  // Binary we can't read: still tell the team the file exists
+  return {
+    name,
+    text: '',
+    note: `${file.type || 'unknown type'}, ${(file.size / 1024).toFixed(0)} KB — contents could not be read in the browser`,
+  }
+}
+
+// Pretty sizes for the chips
+function fmtSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+
 
 // ---------------------------------------------------------------------------
 // Tiny markdown renderer — the team replies in markdown (headers, bold,
@@ -275,6 +339,10 @@ export default function ModernChat({ onExit }) {
   const [error, setError] = useState(null)
   const [sessions, setSessions] = useState([]) // recent server-side chats
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [attachments, setAttachments] = useState([]) // {id, file, note, text, error}
+  const [dragging, setDragging] = useState(false)
+  const [extracting, setExtracting] = useState(false)
+  const fileInputRef = useRef(null)
   const sessionRef = useRef(loadSessionId())
   const scrollRef = useRef(null)
   const taRef = useRef(null)
@@ -324,13 +392,69 @@ export default function ModernChat({ onExit }) {
     setMessages(msgs && msgs.length > 0 ? msgs : [WELCOME])
   }
 
+  // ---- attachments ----
+
+  const addFiles = async (fileList) => {
+    const files = Array.from(fileList || [])
+    if (files.length === 0) return
+    const batch = files.map((f) => ({
+      id: Math.random().toString(36).slice(2, 9),
+      file: f,
+      note: 'reading…',
+      text: '',
+      error: null,
+    }))
+    setAttachments((a) => [...a, ...batch])
+    setExtracting(true)
+    await Promise.all(
+      batch.map(async (att) => {
+        try {
+          const { name, text, note } = await extractFileText(att.file)
+          setAttachments((a) =>
+            a.map((x) => (x.id === att.id ? { ...x, text, note: `${name} · ${note}` } : x)),
+          )
+        } catch (e) {
+          setAttachments((a) =>
+            a.map((x) =>
+              x.id === att.id
+                ? { ...x, note: att.file.name, error: e?.message || 'could not read file' }
+                : x,
+            ),
+          )
+        }
+      }),
+    )
+    setExtracting(false)
+  }
+
+  const removeAttachment = (id) => setAttachments((a) => a.filter((x) => x.id !== id))
+
   async function send(preset) {
-    const text = (preset ?? input).trim()
-    if (!text || busy) return
+    const typed = (preset ?? input).trim()
+    if ((!typed && attachments.length === 0) || busy) return
+    // Build the outgoing message: prompt + extracted file contents. The
+    // attachments' text rides inline so the model can actually read them.
+    const parts = []
+    if (typed) parts.push(typed)
+    for (const att of attachments) {
+      if (att.error) {
+        parts.push(`[Attached file: ${att.file.name} — ${att.error}]`)
+      } else if (att.text) {
+        parts.push(`[Attached file: ${att.file.name}]\n"""\n${att.text}\n"""`)
+      } else {
+        parts.push(`[Attached file: ${att.file.name} — ${att.note}]`)
+      }
+    }
+    const text = parts.join('\n\n')
+    const shownFiles = attachments.map((a) => a.file.name)
     setInput('')
+    setAttachments([])
     if (taRef.current) taRef.current.style.height = 'auto'
     setError(null)
-    setMessages((m) => [...m, { role: 'user', text }])
+    setMessages((m) => [
+      ...m,
+      { role: 'user', text: typed || '(sent attachments)', files: shownFiles },
+    ])
     setBusy(true)
     try {
       const body = new FormData()
@@ -441,7 +565,18 @@ export default function ModernChat({ onExit }) {
             {!loadingHistory && messages.map((m, i) =>
               m.role === 'user' ? (
                 <div key={i} className="mc-row user">
-                  <div className="mc-bubble user">{m.text}</div>
+                  <div className="mc-bubble user">
+                    {m.files?.length > 0 && (
+                      <div className="mc-bubble-files">
+                        {m.files.map((f) => (
+                          <span key={f} className="mc-filetag" title={f}>
+                            📄 {f}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {m.text}
+                  </div>
                 </div>
               ) : (
                 <div key={i} className="mc-row brain">
@@ -481,7 +616,25 @@ export default function ModernChat({ onExit }) {
           </div>
         </div>
 
-        <div className="mc-dock">
+        <div
+          className="mc-dock"
+          onDragOver={(e) => {
+            e.preventDefault()
+            setDragging(true)
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget.contains(e.relatedTarget)) return
+            setDragging(false)
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragging(false)
+            addFiles(e.dataTransfer?.files)
+          }}
+        >
+          {dragging && (
+            <div className="mc-dropzone">drop files to attach…</div>
+          )}
           {activeAgents.length > 0 && (
             <div className="mc-active">
               {activeAgents.map((a) => (
@@ -492,17 +645,72 @@ export default function ModernChat({ onExit }) {
               ))}
             </div>
           )}
+          {attachments.length > 0 && (
+            <div className="mc-attach-strip">
+              {attachments.map((att) => (
+                <span key={att.id} className={`mc-attach ${att.error ? 'error' : ''}`} title={att.note}>
+                  <span className="mc-attach-icon">📄</span>
+                  <span className="mc-attach-body">
+                    <span className="mc-attach-name">{att.file.name}</span>
+                    <span className="mc-attach-note">
+                      {att.error ? att.error : att.note}
+                      {att.note === 'reading…' ? '' : ` · ${fmtSize(att.file.size)}`}
+                    </span>
+                  </span>
+                  <button
+                    className="mc-attach-x"
+                    title="Remove"
+                    onClick={() => removeAttachment(att.id)}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           {error && <div className="mc-error">⚠ {error}</div>}
           <div className="mc-inputwrap">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                addFiles(e.target.files)
+                e.target.value = '' // allow re-adding the same file
+              }}
+            />
+            <button
+              className="mc-attachbtn"
+              title="Attach files (PDF, text, code, data…)"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.2-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
             <textarea
               ref={taRef}
               className="mc-input"
               rows={1}
-              placeholder="Message Company Brain…"
+              placeholder="Message Company Brain — or drop / paste a file…"
               value={input}
               onChange={(e) => {
                 setInput(e.target.value)
                 grow()
+              }}
+              onPaste={(e) => {
+                const pasted = e.clipboardData?.files
+                if (pasted && pasted.length > 0) {
+                  e.preventDefault()
+                  addFiles(pasted)
+                }
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -512,9 +720,9 @@ export default function ModernChat({ onExit }) {
               }}
             />
             <button
-              className={`mc-send ${busy || !input.trim() ? 'disabled' : ''}`}
+              className={`mc-send ${busy || (!input.trim() && attachments.length === 0) ? 'disabled' : ''}`}
               onClick={() => send()}
-              disabled={busy || !input.trim()}
+              disabled={busy || (!input.trim() && attachments.length === 0)}
               title="Send"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -523,7 +731,7 @@ export default function ModernChat({ onExit }) {
             </button>
           </div>
           <div className="mc-foot">
-            Company Brain can delegate to its specialist agents — answers may take a few seconds.
+            Attach PDFs, docs, code or data — drop, paste, or click 📎. Links pasted in the message work too.
           </div>
         </div>
       </main>
