@@ -37,6 +37,56 @@ function newSession() {
 }
 
 // ---------------------------------------------------------------------------
+// Sessions — conversations persist server-side (Postgres via AgentOS).
+// GET /sessions lists them; GET /sessions/:id/runs replays the messages.
+// ---------------------------------------------------------------------------
+
+async function fetchSessions() {
+  try {
+    const res = await fetch('/sessions?limit=30')
+    if (!res.ok) return []
+    const data = await res.json()
+    const list = Array.isArray(data) ? data : data.data || []
+    return list
+      .filter((s) => s.session_type === 'team')
+      .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
+  } catch {
+    return []
+  }
+}
+
+async function fetchSessionMessages(sessionId) {
+  try {
+    const res = await fetch(`/sessions/${encodeURIComponent(sessionId)}/runs?limit=100`)
+    if (!res.ok) return null
+    const data = await res.json()
+    const runs = Array.isArray(data) ? data : data.data || []
+    const msgs = []
+    for (const r of runs) {
+      const q = (r.run_input || '').trim()
+      const a = (r.content || '').trim()
+      if (q) msgs.push({ role: 'user', text: q })
+      if (a) msgs.push({ role: 'brain', text: a })
+    }
+    return msgs
+  } catch {
+    return null
+  }
+}
+
+function timeAgo(iso) {
+  if (!iso) return ''
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (!Number.isFinite(s) || s < 0) return ''
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  if (s < 86400 * 7) return `${Math.floor(s / 86400)}d ago`
+  return new Date(iso).toLocaleDateString()
+}
+
+
+// ---------------------------------------------------------------------------
 // Tiny markdown renderer — the team replies in markdown (headers, bold,
 // lists, code). Escapes HTML first, then applies a fixed set of transforms.
 // No dependency: keeps the bundle small and the output predictable.
@@ -212,17 +262,19 @@ function shortName(a) {
 // The view
 // ---------------------------------------------------------------------------
 
+const WELCOME = {
+  role: 'brain',
+  text: "Hi, I'm your **Company Brain** — a Chief of Staff coordinating a team of specialists: sales, finance, legal, market research, strategy and more.\n\nAsk me anything, or start with a suggestion below.",
+}
+
 export default function ModernChat({ onExit }) {
   const { connected, snapshot } = useAgentStatus()
-  const [messages, setMessages] = useState(() => [
-    {
-      role: 'brain',
-      text: "Hi, I'm your **Company Brain** — a Chief of Staff coordinating a team of specialists: sales, finance, legal, market research, strategy and more.\n\nAsk me anything, or start with a suggestion below.",
-    },
-  ])
+  const [messages, setMessages] = useState(() => [WELCOME])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [sessions, setSessions] = useState([]) // recent server-side chats
+  const [loadingHistory, setLoadingHistory] = useState(false)
   const sessionRef = useRef(loadSessionId())
   const scrollRef = useRef(null)
   const taRef = useRef(null)
@@ -235,7 +287,7 @@ export default function ModernChat({ onExit }) {
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages, busy, activeAgents.length])
+  }, [messages, busy, activeAgents.length, loadingHistory])
 
   // composer auto-grow
   const grow = () => {
@@ -243,6 +295,33 @@ export default function ModernChat({ onExit }) {
     if (!ta) return
     ta.style.height = 'auto'
     ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'
+  }
+
+  const refreshSessions = () => {
+    fetchSessions().then(setSessions)
+  }
+
+  // load the recent-sessions list once, then after each completed reply
+  useEffect(() => {
+    refreshSessions()
+  }, [messages.length === 1 ? 0 : messages.length])
+
+  // open a past chat: swap the session id, then replay its messages
+  const openSession = async (sid) => {
+    if (busy || sid === sessionRef.current) return
+    sessionRef.current = sid
+    try {
+      localStorage.setItem('cb_session_id', sid)
+    } catch {
+      /* ignore */
+    }
+    setError(null)
+    setInput('')
+    setLoadingHistory(true)
+    setMessages([]) // clear immediately so old text can't bleed into the new chat
+    const msgs = await fetchSessionMessages(sid)
+    setLoadingHistory(false)
+    setMessages(msgs && msgs.length > 0 ? msgs : [WELCOME])
   }
 
   async function send(preset) {
@@ -265,6 +344,7 @@ export default function ModernChat({ onExit }) {
         (typeof data?.content === 'string' && data.content.trim()) ||
         '(no content returned)'
       setMessages((m) => [...m, { role: 'brain', text: reply }])
+      refreshSessions() // the new exchange becomes a visible recent chat
     } catch (e) {
       setError(e?.message ? String(e.message) : String(e))
     } finally {
@@ -273,8 +353,9 @@ export default function ModernChat({ onExit }) {
   }
 
   const startNewChat = () => {
+    if (busy) return
     sessionRef.current = newSession()
-    setMessages((m) => m.slice(0, 1)) // keep the welcome note only
+    setMessages([WELCOME])
     setError(null)
   }
 
@@ -306,6 +387,30 @@ export default function ModernChat({ onExit }) {
           ))}
         </div>
 
+        <div className="mc-sessions">
+          <div className="mc-side-label">
+            recent chats
+            {sessions.length > 0 && <span className="mc-sess-count">{sessions.length}</span>}
+          </div>
+          {sessions.length === 0 && <div className="mc-side-empty">no saved chats yet</div>}
+          {sessions.map((s) => (
+            <button
+              key={s.session_id}
+              className={`mc-session ${s.session_id === sessionRef.current ? 'active' : ''}`}
+              onClick={() => openSession(s.session_id)}
+              title={s.session_name || s.session_id}
+            >
+              <span className="mc-session-icon">✦</span>
+              <span className="mc-session-body">
+                <span className="mc-session-name">
+                  {(s.session_name || s.session_id).slice(0, 60)}
+                </span>
+                <span className="mc-session-time">{timeAgo(s.updated_at || s.created_at)}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+
         <button className="mc-exit" onClick={onExit} title="Back to the office-floor workbench">
           ▤ Office floor view
         </button>
@@ -330,7 +435,10 @@ export default function ModernChat({ onExit }) {
 
         <div className="mc-scroll" ref={scrollRef}>
           <div className="mc-thread">
-            {messages.map((m, i) =>
+            {loadingHistory && (
+              <div className="mc-loading-history">loading conversation…</div>
+            )}
+            {!loadingHistory && messages.map((m, i) =>
               m.role === 'user' ? (
                 <div key={i} className="mc-row user">
                   <div className="mc-bubble user">{m.text}</div>
@@ -359,7 +467,7 @@ export default function ModernChat({ onExit }) {
                 </div>
               </div>
             )}
-            {messages.length === 1 && !busy && (
+            {messages.length === 1 && !busy && !loadingHistory && (
               <div className="mc-suggest">
                 {SUGGESTIONS.map((s) => (
                   <button key={s.title} className="mc-card" onClick={() => send(s.text)}>
