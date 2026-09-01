@@ -255,17 +255,15 @@ function renderMarkdown(md) {
 // ---------------------------------------------------------------------------
 
 function BrainMark({ size = 28 }) {
-  // simple spark mark — brand accent without emoji clutter
+  // The user's Company Brain logo — white tile, periwinkle mark.
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" className="mc-mark" aria-hidden="true">
-      <path
-        d="M12 2c.5 3-1.7 4.2-3 5.5C7 9.3 6 11 6 13.5 6 17.7 8.7 20 12 20s6-2.3 6-6.5c0-2.5-1-4.2-3-6-1.3-1.3-3.5-2.5-3-5.5Z"
-        fill="#F4D35E"
-        stroke="#6E1423"
-        strokeWidth="1.4"
-      />
-      <path d="M12 8v9M9.5 11.5h5M9.5 14.5h5" stroke="#6E1423" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
+    <img
+      src="/floor/logo.png"
+      alt="Company Brain"
+      className="mc-mark"
+      style={{ width: size, height: size }}
+      draggable={false}
+    />
   )
 }
 
