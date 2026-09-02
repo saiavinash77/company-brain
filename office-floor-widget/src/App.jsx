@@ -358,11 +358,16 @@ function FloorView() {
   const { connected, snapshot, lastEvent } = useAgentStatus()
   const canvasRef = useRef(null)
   const sceneRef = useRef(null)
+  // latest snapshot, readable from init's .then() without a stale closure —
+  // the REST snapshot usually lands BEFORE pixi finishes booting, and a
+  // closure over `snapshot` would capture the first-render value (null)
+  const snapRef = useRef(null)
   const [selected, setSelected] = useState(null)
   const [activity, setActivity] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState(null)
   const [pixiReady, setPixiReady] = useState(false)
+  const [pixiFailed, setPixiFailed] = useState(false) // DOM floor shows instead
 
   // mount pixi once the canvas is in the DOM and visible
   useEffect(() => {
@@ -385,19 +390,36 @@ function FloorView() {
         .then(() => {
           if (!disposed) {
             setPixiReady(true)
-            if (snapshot) scene.applySnapshot(snapshot)
+            setPixiFailed(false)
+            if (snapRef.current) sceneRef.current.applySnapshot(snapRef.current)
           }
         })
         .catch((e) => {
-          console.error('pixi init failed, keeping DOM floor', e)
-          if (!disposed) setPixiReady(false)
+          console.error('pixi init failed, showing DOM floor', e)
+          if (!disposed) {
+            setPixiReady(false)
+            setPixiFailed(true) // agents stay visible on the DOM floor
+          }
         })
     }
     // defer one frame so layout/visibility is settled (fixes blank overlay)
     const t = setTimeout(tryInit, 60)
+    // Watchdog: if Pixi "initialized" but never drew a frame (WebGL context
+    // hiccup), swap to the DOM floor so the agents are always visible —
+    // this is the "only floor, no agents until refresh" bug.
+    const w = setTimeout(() => {
+      if (!disposed && !sceneRef.current?.hasRendered) {
+        console.warn('[floor] pixi produced no frames — falling back to DOM floor')
+        try { sceneRef.current?.destroy() } catch {}
+        sceneRef.current = null
+        setPixiReady(false)
+        setPixiFailed(true)
+      }
+    }, 4000)
     return () => {
       disposed = true
       clearTimeout(t)
+      clearTimeout(w)
       try {
         sceneRef.current?.destroy()
       } catch {}
@@ -417,6 +439,7 @@ function FloorView() {
 
   // push snapshot into the scene whenever it changes
   useEffect(() => {
+    snapRef.current = snapshot || null
     if (sceneRef.current && snapshot) sceneRef.current.applySnapshot(snapshot)
   }, [snapshot])
 
@@ -458,27 +481,33 @@ function FloorView() {
       </header>
 
         <div className="canvas-wrap">
-          {/* DOM floor is the reliable render — always visible */}
-          <FloorFallback entries={entries} onSelect={openAgent} />
-          {/* Pixi canvas layers on top once it initializes. It must be
-              mounted from the start: init needs the element, and the
-              element only existing after init is a chicken-and-egg that
-              left the floor static (render: dom, no walking). */}
-          <canvas
-            ref={canvasRef}
-            width={WORLD.width}
-            height={WORLD.height}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              zIndex: 2,
-              visibility: pixiReady ? 'visible' : 'hidden',
-              pointerEvents: pixiReady ? 'auto' : 'none',
-            }}
-          />
-          {!snapshot && <div className="loading">connecting to the office…</div>}
+          {/* ONE floor at a time. Previously the DOM fallback sat under the
+              canvas and both were always mounted: users saw two stacked
+              floors (green canvas over a biscuit DOM pattern), and when the
+              canvas initialized but drew nothing, its blank green rect
+              covered the agents — "floor but no agents" until refresh.
+              Now: canvas when Pixi is live; DOM floor only when Pixi
+              failed, so agents are always visible on exactly one floor. */}
+          {pixiFailed ? (
+            <FloorFallback entries={entries} onSelect={openAgent} />
+          ) : (
+            <canvas
+              ref={canvasRef}
+              width={WORLD.width}
+              height={WORLD.height}
+              title="Drag agents to rearrange the office — click an agent for details"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: 2,
+                visibility: pixiReady ? 'visible' : 'hidden',
+                pointerEvents: pixiReady ? 'auto' : 'none',
+              }}
+            />
+          )}
+          {!pixiReady && !pixiFailed && <div className="loading">starting the office…</div>}
           <div className="floor-debug">
-            render: {pixiReady ? 'pixi+dom' : 'dom'} · agents: {entries.length}
+            render: {pixiFailed ? 'dom (pixi failed)' : pixiReady ? 'pixi' : 'starting…'} · agents: {entries.length}
           </div>
         </div>
 

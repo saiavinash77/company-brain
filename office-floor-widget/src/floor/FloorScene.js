@@ -86,7 +86,55 @@ export class FloorScene {
       this.world.addChild(g, lbl)
     }
     this.world.sortableChildren = true
-    this.app.ticker.add((ticker) => this.tick(ticker.deltaMS / 1000))
+    this.app.ticker.add((ticker) => {
+      this.hasRendered = true // at least one frame drawn — canvas is alive
+      this.tick(ticker.deltaMS / 1000)
+    })
+    this.attachDragTracking()
+    // snapshot that arrived while Pixi was booting — agents exist from frame 1
+    if (this.pendingSnapshot) {
+      this.applySnapshot(this.pendingSnapshot)
+      this.pendingSnapshot = null
+    }
+  }
+
+  /** Stage-level drag tracking: one listener pair moves/releases whichever
+   *  actor is currently grabbed, even when the pointer leaves the actor. */
+  attachDragTracking() {
+    const scene = this
+    this.dragActor = null
+    this.app.stage.eventMode = 'static'
+    this.app.stage.hitArea = this.app.screen
+    this.app.stage.on('pointermove', (e) => {
+      const actor = scene.dragActor
+      if (!actor?.dragging) return
+      const pt = scene.world.toLocal(e.global)
+      const nx = Math.min(WORLD.width - 8, Math.max(8, pt.x))
+      const ny = Math.min(WORLD.height - 4, Math.max(30, pt.y))
+      if (Math.hypot(nx - actor.dragFrom.x, ny - actor.dragFrom.y) > 3) actor.dragMoved = true
+      actor.x = nx
+      actor.y = ny
+      actor.route = [] // cancel any walk while being carried
+      actor.meta.desk = { x: nx, y: ny + 14 }
+      actor.root.position.set(nx, ny)
+      actor.root.zIndex = 900
+    })
+    const endDrag = () => {
+      const actor = scene.dragActor
+      if (!actor) return
+      scene.dragActor = null
+      if (!actor.dragging) return
+      actor.dragging = false
+      actor.root.cursor = 'pointer'
+      // settle: desk moves to the drop point, walk-home targets it
+      actor.homeX = actor.x
+      actor.homeY = actor.y
+      actor.root.zIndex = Math.round(actor.y)
+      actor.drawDesk()
+    }
+    this.app.stage.on('pointerup', endDrag)
+    this.app.stage.on('pointerupoutside', endDrag)
+    this.app.stage.on('pointercancel', endDrag)
   }
 
   destroy() {
@@ -97,7 +145,14 @@ export class FloorScene {
 
   // ---- snapshot / event API ------------------------------------------
 
+  // Before init() finishes there is no world to add actors to. The REST
+  // snapshot often lands while Pixi is still booting — defer it instead of
+  // dropping it, or the floor stays empty until some later state event.
   applySnapshot(snapshot) {
+    if (!this.world) {
+      this.pendingSnapshot = snapshot
+      return
+    }
     const entries = [...(snapshot.agents || []), ...(snapshot.clients || [])]
     for (const meta of entries) this.ensureActor(meta)
     const ids = new Set(entries.map((e) => e.agent_id))
@@ -152,6 +207,7 @@ export class FloorScene {
       return
     }
     const actor = new Actor(this.world, meta, {
+      scene: this, // stage-level drag tracking needs the scene
       onSelect: (m) => this.callbacks.onSelect?.(m),
       onSparkle: (pt, color) => this.spawnSparkle(pt, color),
     })
@@ -273,6 +329,7 @@ class Actor {
   constructor(world, meta, hooks = {}) {
     this.world = world
     this.hooks = hooks
+    this.scene = hooks.scene || null // for stage-level drag tracking
     this.meta = meta
     this.state = meta.state || 'idle'
     this.summary = meta.task_summary || ''
@@ -347,10 +404,30 @@ class Actor {
     world.sortableChildren = true
     world.addChild(this.root)
 
-    // click-to-select
+    // click-to-select + drag-to-move
     this.root.eventMode = 'static'
     this.root.cursor = 'pointer'
-    this.root.on('pointertap', () => this.hooks.onSelect?.({ ...this.meta }))
+    // generous grab zone around the avatar (it's small at 0.7 scale)
+    this.root.hitArea = { contains: (x, y) => Math.abs(x) <= 34 && y >= -76 && y <= 22 }
+    this.dragging = false
+    this.dragMoved = false
+    this.root.on('pointertap', () => {
+      if (this.dragMoved) return // a drag just ended — not a tap
+      this.hooks.onSelect?.({ ...this.meta })
+    })
+    // Drag-to-rearrange: press an agent, drop anywhere on the floor — the
+    // desk (home position) moves with it, so walking/station logic continues
+    // from the new spot. Move/up are tracked on the STAGE (via the scene's
+    // dragActor) because the pointer can leave the actor mid-drag.
+    this.root.on('pointerdown', (e) => {
+      e.stopPropagation()
+      this.dragging = true
+      this.dragMoved = false
+      this.dragFrom = { x: this.x, y: this.y }
+      this.root.cursor = 'grabbing'
+      this.root.zIndex = 900 // lift above coworkers while dragging
+      this.scene.dragActor = this
+    })
 
     this.homeX = meta.desk.x
     this.homeY = meta.desk.y - 14

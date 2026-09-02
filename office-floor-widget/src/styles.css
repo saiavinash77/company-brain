@@ -538,7 +538,8 @@ body.split-resizing {
   pointer-events: none;
 }
 
-/* ---- DOM fallback floor (shown only if Pixi fails) ---- */
+/* ---- DOM fallback floor (shown only if Pixi fails) ----
+   Same palette as the Pixi scene (tokens.js grass tiles) — no biscuit. */
 .floor-fallback {
   position: relative;
   flex: 1 1 auto;
@@ -546,18 +547,21 @@ body.split-resizing {
   min-height: 480px;
   aspect-ratio: 960 / 560;
   background:
-    repeating-linear-gradient(0deg, #f3e6cf 0 38px, #efe0c6 38px 40px),
-    repeating-linear-gradient(90deg, #f3e6cf 0 38px, #efe0c6 38px 40px);
-  border: 3px solid #b9863f;
+    repeating-linear-gradient(0deg, #9FD08A 0 32px, #8CC178 32px 64px),
+    repeating-linear-gradient(90deg, #9FD08A 0 32px, #8CC178 32px 64px);
+  border-top: 32px solid #7A5C46;
+  border-left: 3px solid #2c5e2b;
+  border-right: 3px solid #2c5e2b;
+  border-bottom: 3px solid #2c5e2b;
   border-radius: 10px;
-  box-shadow: inset 0 0 30px rgba(120, 80, 30, 0.12);
+  box-shadow: inset 0 0 30px rgba(30, 70, 30, 0.15);
   overflow: hidden;
 }
 .ff-table {
   position: absolute;
   width: 70px; height: 70px;
   transform: translate(-50%, -50%);
-  background: radial-gradient(circle at 50% 40%, #fff7e6, #e7c79a);
+  background: radial-gradient(circle at 50% 40%, #fbf3e0, #e7c79a);
   border: 3px solid #8a5423; border-radius: 50%;
   box-shadow: 0 3px 0 #8a5423;
 }
@@ -565,8 +569,10 @@ body.split-resizing {
   position: absolute;
   transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; gap: 2px;
-  background: none; border: none; cursor: pointer; padding: 0; width: 76px;
+  background: none; border: none; cursor: grab; padding: 0; width: 76px;
+  touch-action: none;
 }
+.ff-agent:active { cursor: grabbing; }
 .ff-agent .ff-head {
   width: 17px; height: 17px; border-radius: 50%;
   background: #E8B98F; border: 2px solid #fff;
@@ -584,18 +590,19 @@ body.split-resizing {
   width: 4px; height: 14px; background: #fff; border-radius: 2px;
 }
 .ff-agent .ff-name {
-  font-size: 9px; font-weight: 700; color: #4a3a2a; text-shadow: 0 1px 0 #fff;
+  font-size: 9px; font-weight: 700; color: #fff; text-shadow: 0 1px 0 rgba(0,0,0,.5);
   white-space: nowrap;
 }
 .ff-agent .ff-pill {
   font-size: 8px; padding: 1px 5px; border-radius: 8px;
-  background: #cdbfa8; color: #4a3a2a;
+  background: #2c6e2b; color: #fff;
 }
 .ff-agent.working .ff-body {
   animation: ff-pulse 1s ease-in-out infinite;
   box-shadow: 0 0 0 4px rgba(255,211,61,.5), 0 3px 0 rgba(0,0,0,.2);
 }
 .ff-agent.working .ff-pill { background: #ffe08a; color: #7a4a00; font-weight: 700; }
-.ff-agent:hover .ff-body { outline: 3px solid #6e1423; outline-offset: 2px; }
+.ff-agent:hover .ff-body { outline: 3px solid #fff; outline-offset: 2px; }
 @keyframes ff-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+
 
