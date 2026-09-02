@@ -329,6 +329,97 @@ const WELCOME = {
   text: "Hi, I'm your **Company Brain** — a Chief of Staff coordinating a team of specialists: sales, finance, legal, market research, strategy and more.\n\nAsk me anything, or start with a suggestion below.",
 }
 
+// ---------------------------------------------------------------------------
+// Live briefing — what fills the empty new-chat screen:
+//   1. real recent tech news (Hacker News front page, no API key needed)
+//   2. the latest exchanges from your own Company Brain conversations
+// The welcome text stays (it explains the product); the briefing rides below.
+// ---------------------------------------------------------------------------
+
+async function fetchTechNews(limit = 5) {
+  try {
+    const res = await fetch('https://hacker-news.firebaseio.com/v0/topstories.json')
+    if (!res.ok) return []
+    const ids = await res.json()
+    const picks = (ids || []).slice(0, 12)
+    const items = await Promise.all(
+      picks.map((id) =>
+        fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`)
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null),
+      ),
+    )
+    return items
+      .filter((it) => it && !it.dead && !it.deleted && it.title)
+      .slice(0, limit)
+      .map((it) => ({
+        title: it.title,
+        url: it.url || `https://news.ycombinator.com/item?id=${it.id}`,
+        points: it.score || 0,
+        ago: timeAgo(new Date((it.time || 0) * 1000).toISOString()),
+      }))
+  } catch {
+    return []
+  }
+}
+
+// Latest things said in Company Brain sessions — the user's own client work.
+// Returns false when there is genuinely no conversation to show.
+async function fetchRecentConversation(sessions) {
+  try {
+    const withRuns = await Promise.all(
+      sessions.slice(0, 4).map(async (s) => {
+        const msgs = await fetchSessionMessages(s.session_id)
+        return msgs && msgs.length > 0 ? { session: s, msgs } : null
+      }),
+    )
+    // the newest chat that actually has messages
+    for (const c of withRuns) {
+      if (!c) continue
+      const lastUser = [...c.msgs].reverse().find((m) => m.role === 'user')
+      const lastBrain = [...c.msgs].reverse().find((m) => m.role === 'brain')
+      if (!lastUser && !lastBrain) continue
+      return {
+        ago: timeAgo(c.session.updated_at || c.session.created_at),
+        asked: lastUser ? lastUser.text : '',
+        answered: lastBrain ? lastBrain.text.slice(0, 400) : '',
+      }
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reader settings — text size and font, remembered per browser.
+// ---------------------------------------------------------------------------
+
+const FONT_CHOICES = [
+  { id: 'josefin', label: 'Josefin Sans', stack: "'Josefin Sans', 'Segoe UI', sans-serif" },
+  { id: 'system', label: 'System', stack: "'Segoe UI', system-ui, sans-serif" },
+  { id: 'georgia', label: 'Bookish', stack: "Georgia, 'Times New Roman', serif" },
+  { id: 'mono', label: 'Mono', stack: "'Cascadia Mono', 'Consolas', monospace" },
+]
+
+const SIZE_CHOICES = [
+  { id: 'small', label: 'A', cls: 'mc-size-small', px: '14px' },
+  { id: 'medium', label: 'A', cls: 'mc-size-medium', px: '15.5px' },
+  { id: 'large', label: 'A', cls: 'mc-size-large', px: '17.5px' },
+]
+
+function loadReaderPrefs() {
+  let font = 'josefin'
+  let size = 'medium'
+  try {
+    font = localStorage.getItem('cb_font') || font
+    size = localStorage.getItem('cb_text_size') || size
+  } catch {
+    /* private mode */
+  }
+  return { font, size }
+}
+
 export default function ModernChat({ onExit }) {
   const { connected, snapshot } = useAgentStatus()
   const [messages, setMessages] = useState(() => [WELCOME])
@@ -340,10 +431,37 @@ export default function ModernChat({ onExit }) {
   const [attachments, setAttachments] = useState([]) // {id, file, note, text, error}
   const [dragging, setDragging] = useState(false)
   const [extracting, setExtracting] = useState(false)
+  const [news, setNews] = useState(null) // null = loading, [] = unavailable
+  const [recap, setRecap] = useState(null) // latest own conversation, same rules
+  const [showSettings, setShowSettings] = useState(false)
+  const [prefs, setPrefs] = useState(loadReaderPrefs)
   const fileInputRef = useRef(null)
   const sessionRef = useRef(loadSessionId())
   const scrollRef = useRef(null)
   const taRef = useRef(null)
+
+  // apply reader prefs: size class + font var on the whole chat root
+  useEffect(() => {
+    const font = FONT_CHOICES.find((f) => f.id === prefs.font) || FONT_CHOICES[0]
+    const size = SIZE_CHOICES.find((s) => s.id === prefs.size) || SIZE_CHOICES[1]
+    const root = document.documentElement
+    root.style.setProperty('--mc-font', font.stack)
+    root.classList.remove('mc-size-small', 'mc-size-medium', 'mc-size-large')
+    root.classList.add(size.cls)
+  }, [prefs])
+
+  // live briefing for the welcome screen — news + the latest own conversation
+  useEffect(() => {
+    let alive = true
+    fetchTechNews(5).then((items) => alive && setNews(items))
+    fetchSessions().then((list) => {
+      if (!alive) return
+      fetchRecentConversation(list).then((r) => alive && setRecap(r))
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   const agents = snapshot?.agents || []
 
@@ -481,6 +599,19 @@ export default function ModernChat({ onExit }) {
     setError(null)
   }
 
+  const setPref = (key, value) => {
+    setPrefs((p) => {
+      const next = { ...p, [key]: value }
+      try {
+        localStorage.setItem('cb_font', next.font)
+        localStorage.setItem('cb_text_size', next.size)
+      } catch {
+        /* private mode */
+      }
+      return next
+    })
+  }
+
   return (
     <div className="mc-root">
       <aside className="mc-sidebar">
@@ -553,6 +684,58 @@ export default function ModernChat({ onExit }) {
           <div className="mc-header-sub">
             coordinate-mode team · {agents.length} specialists
           </div>
+          <div className="mc-header-actions">
+            <button
+              className={`mc-gear ${showSettings ? 'on' : ''}`}
+              title="Text size & font"
+              onClick={() => setShowSettings((v) => !v)}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M4 7h9m4 0h3M4 17h3m4 0h9M15 4v6M9 14v6"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+                <circle cx="15" cy="7" r="2" stroke="currentColor" strokeWidth="2" />
+                <circle cx="9" cy="17" r="2" stroke="currentColor" strokeWidth="2" />
+              </svg>
+            </button>
+            {showSettings && (
+              <div className="mc-prefs">
+                <div className="mc-prefs-row">
+                  <span className="mc-prefs-label">text size</span>
+                  <div className="mc-prefs-opts">
+                    {SIZE_CHOICES.map((s) => (
+                      <button
+                        key={s.id}
+                        className={`mc-opt ${prefs.size === s.id ? 'sel' : ''}`}
+                        style={{ fontSize: s.px }}
+                        onClick={() => setPref('size', s.id)}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="mc-prefs-row">
+                  <span className="mc-prefs-label">font</span>
+                  <div className="mc-prefs-opts">
+                    {FONT_CHOICES.map((f) => (
+                      <button
+                        key={f.id}
+                        className={`mc-opt ${prefs.font === f.id ? 'sel' : ''}`}
+                        style={{ fontFamily: f.stack }}
+                        onClick={() => setPref('font', f.id)}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </header>
 
         <div className="mc-scroll" ref={scrollRef}>
@@ -601,15 +784,66 @@ export default function ModernChat({ onExit }) {
               </div>
             )}
             {messages.length === 1 && !busy && !loadingHistory && (
-              <div className="mc-suggest">
-                {SUGGESTIONS.map((s) => (
-                  <button key={s.title} className="mc-card" onClick={() => send(s.text)}>
-                    <span className="mc-card-icon">{s.icon}</span>
-                    <span className="mc-card-title">{s.title}</span>
-                    <span className="mc-card-text">{s.text}</span>
-                  </button>
-                ))}
-              </div>
+              <>
+                {/* live briefing — real tech news + own recent client work */}
+                <div className="mc-briefing">
+                  <div className="mc-brief-col">
+                    <div className="mc-brief-head">
+                      <span className="mc-brief-icon">⚡</span> what's happening in tech
+                    </div>
+                    {news === null && <div className="mc-brief-empty">fetching the latest news…</div>}
+                    {news !== null && news.length === 0 && (
+                      <div className="mc-brief-empty">news feed unavailable (offline?)</div>
+                    )}
+                    {news?.length > 0 && (
+                      <ul className="mc-news">
+                        {news.map((n) => (
+                          <li key={n.url}>
+                            <a href={n.url} target="_blank" rel="noreferrer">
+                              {n.title}
+                            </a>
+                            <span className="mc-news-meta">
+                              {n.points} points · {n.ago}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div className="mc-brief-col">
+                    <div className="mc-brief-head">
+                      <span className="mc-brief-icon">✦</span> your latest company-brain conversation
+                    </div>
+                    {recap === null && <div className="mc-brief-empty">checking your chats…</div>}
+                    {recap === false && <div className="mc-brief-empty">no conversations yet — say hi!</div>}
+                    {recap && (
+                      <div className="mc-recap">
+                        {recap.asked && (
+                          <div className="mc-recap-ask">
+                            <span>you asked</span> {recap.asked.slice(0, 160)}
+                          </div>
+                        )}
+                        {recap.answered && (
+                          <div className="mc-recap-answer">
+                            <span>brain replied</span> {recap.answered.slice(0, 220)}…
+                          </div>
+                        )}
+                        <div className="mc-recap-time">{recap.ago}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mc-suggest">
+                  {SUGGESTIONS.map((s) => (
+                    <button key={s.title} className="mc-card" onClick={() => send(s.text)}>
+                      <span className="mc-card-icon">{s.icon}</span>
+                      <span className="mc-card-title">{s.title}</span>
+                      <span className="mc-card-text">{s.text}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
