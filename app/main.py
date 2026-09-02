@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -7,6 +9,7 @@ from pathlib import Path
 import aiohttp
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import (
@@ -34,6 +37,118 @@ logger = logging.getLogger("company-brain")
 # FastAPI app for webhook endpoints
 webhook_app = FastAPI(title="Company Brain Webhooks")
 
+
+# ---- Passcode gate (production access control) ---------------------------
+# When APP_PASSCODE is set, every browser request needs a valid gate cookie
+# (issued after entering the passcode). Machine traffic stays open: /health
+# for uptime checks, /webhook/* for Twilio, and anything when no passcode
+# is configured (local dev stays open exactly as before).
+
+GATE_COOKIE = "cb_gate"
+GATE_COOKIE_MAX_AGE = 30 * 24 * 3600  # 30 days
+# Paths machines hit directly — never gated. /gate/ carries the login form
+# itself (the endpoint validates the passcode), so it must stay reachable.
+GATE_EXEMPT_PREFIXES = ("/health", "/webhook/", "/gate/", "/docs", "/openapi.json", "/redoc")
+
+APP_PASSCODE = os.environ.get("APP_PASSCODE", "")
+
+
+def _gate_secret() -> bytes:
+    """HMAC key for cookie signing: derived from the passcode itself so no
+    extra secret is needed; changing the passcode invalidates old cookies."""
+    return hashlib.sha256(("cb-gate:" + APP_PASSCODE).encode()).digest()
+
+
+def _gate_token() -> str:
+    return hmac.new(_gate_secret(), b"authorized", hashlib.sha256).hexdigest()
+
+
+def _cookie_ok(request: Request) -> bool:
+    token = request.cookies.get(GATE_COOKIE, "")
+    return bool(token) and hmac.compare_digest(token, _gate_token())
+
+
+_GATE_PAGE = """<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Company Brain</title>
+<style>
+  body {{ font-family: 'Segoe UI', system-ui, sans-serif; background: #f7f8fc;
+         display: flex; align-items: center; justify-content: center;
+         min-height: 100vh; margin: 0; color: #1d2130; }}
+  .card {{ background: #fff; border: 1px solid #e5e8f0; border-radius: 16px;
+          padding: 34px 30px; width: 320px; text-align: center;
+          box-shadow: 0 18px 44px rgba(29,33,48,.12); }}
+  img {{ width: 56px; height: 56px; border-radius: 14px; }}
+  h1 {{ font-size: 19px; margin: 14px 0 4px; }}
+  p {{ font-size: 13.5px; color: #6b7280; margin: 0 0 20px; }}
+  input {{ width: 100%; box-sizing: border-box; padding: 11px 13px;
+          border: 1.5px solid #dfe3ee; border-radius: 10px; font-size: 15px;
+          text-align: center; letter-spacing: 2px; outline: none; }}
+  input:focus {{ border-color: #647cf8; box-shadow: 0 0 0 3px rgba(100,124,248,.12); }}
+  button {{ margin-top: 14px; width: 100%; padding: 11px; border: 0;
+           border-radius: 10px; background: #647cf8; color: #fff;
+           font-size: 15px; font-weight: 600; cursor: pointer; }}
+  .err {{ color: #b3261e; font-size: 12.5px; margin-top: 10px; }}
+</style></head><body>
+<div class="card">
+  <img src="/floor/logo.png" alt="">
+  <h1>Company Brain</h1>
+  <p>Enter your passcode to open your workspace.</p>
+  <form method="post" action="/gate/login">
+    <input type="password" name="passcode" placeholder="passcode" autofocus required>
+    <button type="submit">Enter</button>
+  </form>
+  {err}
+</div>
+</body></html>"""
+
+
+@webhook_app.get("/gate/login", include_in_schema=False)
+async def gate_page():
+    return HTMLResponse(_GATE_PAGE.format(err=""))
+
+
+@webhook_app.post("/gate/login", include_in_schema=False)
+async def gate_login(request: Request):
+    form = await request.form()
+    supplied = str(form.get("passcode", ""))
+    if supplied and hmac.compare_digest(supplied, APP_PASSCODE):
+        resp = HTMLResponse(
+            '<!doctype html><meta http-equiv="refresh" content="0;url=/">'
+        )
+        resp.set_cookie(
+            GATE_COOKIE,
+            _gate_token(),
+            max_age=GATE_COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+            secure=os.environ.get("GATE_SECURE_COOKIE", "").lower() in ("1", "true", "yes"),
+        )
+        return resp
+    return HTMLResponse(_GATE_PAGE.format(err='<div class="err">Wrong passcode — try again.</div>'), status_code=401)
+
+
+@webhook_app.middleware("http")
+async def passcode_gate(request: Request, call_next):
+    """Gate all browser traffic when APP_PASSCODE is configured; leave the
+    app fully open when it isn't (local dev). Websockets are gated inside
+    their handlers (starlette's ws middleware call_next is incompatible)."""
+    if not APP_PASSCODE:
+        return await call_next(request)
+    path = request.url.path
+    if path.startswith(GATE_EXEMPT_PREFIXES):
+        return await call_next(request)
+    if _cookie_ok(request):
+        return await call_next(request)
+    return HTMLResponse(_GATE_PAGE.format(err=""), status_code=401)
+
+
+def _cookie_ok_ws(websocket: WebSocket) -> bool:
+    token = websocket.cookies.get(GATE_COOKIE, "")
+    return bool(token) and hmac.compare_digest(token, _gate_token())
+
+
 # Build the team (stores references for webhook access)
 memory = SuperMemory()
 team = build_company_brain_team(memory)
@@ -57,7 +172,12 @@ async def agent_status_snapshot():
 
 @webhook_app.websocket("/ws/agent-status")
 async def ws_agent_status(websocket: WebSocket):
-    """Broadcast live agent activity events to connected floor views."""
+    """Broadcast live agent activity events to connected floor views.
+    Passcode-gated when APP_PASSCODE is set (cookies ride the ws
+    handshake, so the check is the same as the HTTP gate)."""
+    if APP_PASSCODE and not _cookie_ok_ws(websocket):
+        await websocket.close(code=4401)
+        return
     await websocket.accept()
     queue = bus.subscribe()
     try:

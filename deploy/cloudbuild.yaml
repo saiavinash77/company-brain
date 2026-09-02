@@ -1,0 +1,28 @@
+# Builds the Company Brain image inside GCP (Cloud Build + Kaniko-style
+# docker build), then pushes it to Artifact Registry. No local Docker
+# needed — this exists specifically so the crashy Docker Desktop never
+# blocks a deploy.
+#
+# Trigger: gcloud builds submit --config=deploy/cloudbuild.yaml \
+#           --project=$PROJECT --region=asia-south1
+steps:
+  # 1/2 build
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-t"
+      - "${_IMAGE}"
+      - "."
+  # 2/2 push
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "${_IMAGE}"]
+
+# Substitutions (defaults; overridden by deploy.sh):
+substitutions:
+  _IMAGE: "us-central1-docker.pkg.dev/REPLACE/REPLACE/company-brain:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - "${_IMAGE}"
