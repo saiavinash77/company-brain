@@ -305,7 +305,7 @@ def instrument_agno_classes() -> None:
         name = getattr(instance, "name", None) or "agent"
         return slugify(name), name
 
-    def _wrap_arun(orig_arun):
+    def _wrap_arun(orig_arun, is_team: bool):
         # Agno v2's Agent/Team.arun is a PLAIN function that returns either a
         # coroutine (stream=False) or an async generator (stream=True), and
         # AgentOS consumes it accordingly (`await` vs `async for`). The
@@ -314,6 +314,19 @@ def instrument_agno_classes() -> None:
         # TeamRunError "'async for' requires an object with __aiter__".
         def arun_wrapper(self, *args, **kwargs):
             aid, aname = _ids(self)
+            # Speaker identity: team runs carry user_id ("sai"/"bruhadish"/
+            # "sravani" — the UI's slash switcher). Prepend a tag so the
+            # model knows who is asking: user_id is stored on the session
+            # but never shown to the model. Only the TEAM entry run is
+            # tagged; delegated member runs inherit the context via team
+            # history, so they don't need their own tag.
+            if is_team:
+                tag = speaker_tag(kwargs.get("user_id"))
+                if tag:
+                    if isinstance(kwargs.get("input"), str):
+                        kwargs = {**kwargs, "input": tag + kwargs["input"]}
+                    elif args and isinstance(args[0], str):
+                        args = (tag + args[0], *args[1:])
             if not kwargs.get("stream"):
                 async def run_coro():
                     summary = summarize(kwargs.get("input") or (args[0] if args else ""))
@@ -341,6 +354,8 @@ def instrument_agno_classes() -> None:
 
         return arun_wrapper
 
+    from app.identity import speaker_tag  # stdlib-only module; import here avoids cycles
+
     def _wrap_run(orig_run):
         def run_wrapper(self, *args, **kwargs):
             aid, aname = _ids(self)
@@ -356,9 +371,9 @@ def instrument_agno_classes() -> None:
 
         return run_wrapper
 
-    Agent.arun = _wrap_arun(Agent.arun)
+    Agent.arun = _wrap_arun(Agent.arun, is_team=False)
     Agent.run = _wrap_run(Agent.run)
-    Team.arun = _wrap_arun(Team.arun)
+    Team.arun = _wrap_arun(Team.arun, is_team=True)
     Team.run = _wrap_run(Team.run)
     logger.info("Agno Agent/Team run methods instrumented for floor events")
 

@@ -253,22 +253,44 @@ export default function App() {
 
 // ---- chat --------------------------------------------------------------
 
-function loadSessionId() {
+// who is talking: /Sai /Bruhadish /Sravani at the start of a message
+// switches identity; the chosen person rides on the run as user_id so the
+// server tags the prompt and keeps the session in that person's space
+const SLASH_CMD = /^\s*\/(sai|bruhadish|sravani)\b/i
+const PEOPLE = ['sai', 'bruhadish', 'sravani']
+const DISPLAY = { sai: 'Sai', bruhadish: 'Bruhadish', sravani: 'Sravani' }
+
+function personSessionKey(person) {
+  return person ? `cb_session_id_${person}` : 'cb_session_id'
+}
+
+function loadSessionId(person) {
+  const key = personSessionKey(person)
   let sid = null
   try {
-    sid = localStorage.getItem('cb_session_id')
+    sid = localStorage.getItem(key)
   } catch {
     /* private mode etc. */
   }
   if (!sid) {
-    sid = 'web-' + Math.random().toString(36).slice(2, 10)
+    sid = (person ? person + '-' : 'web-') + Math.random().toString(36).slice(2, 10)
     try {
-      localStorage.setItem('cb_session_id', sid)
+      localStorage.setItem(key, sid)
     } catch {
       /* ignore */
     }
   }
   return sid
+}
+
+function loadPerson() {
+  try {
+    const saved = localStorage.getItem('cb_person')
+    if (saved && PEOPLE.includes(saved)) return saved
+  } catch {
+    /* ignore */
+  }
+  return null
 }
 
 function ChatPanel() {
@@ -281,8 +303,13 @@ function ChatPanel() {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  const sessionRef = useRef(loadSessionId())
+  const [person, setPerson] = useState(loadPerson)
+  const sessionRef = useRef(null)
   const scrollRef = useRef(null)
+
+  useEffect(() => {
+    sessionRef.current = loadSessionId(person)
+  }, [person])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -290,8 +317,25 @@ function ChatPanel() {
   }, [messages, busy])
 
   async function send() {
-    const text = input.trim()
+    let text = input.trim()
     if (!text || busy) return
+    // leading slash command switches the speaker (e.g. "/Sai pricing?")
+    const m = text.match(SLASH_CMD)
+    let speaker = person
+    if (m) {
+      speaker = m[1].toLowerCase()
+      if (speaker !== person) {
+        try {
+          localStorage.setItem('cb_person', speaker)
+        } catch {
+          /* ignore */
+        }
+        setPerson(speaker)
+        sessionRef.current = loadSessionId(speaker)
+      }
+      text = text.replace(SLASH_CMD, '').trim()
+    }
+    if (!text) return
     setInput('')
     setError(null)
     setMessages((m) => [...m, { role: 'user', text }])
@@ -302,6 +346,7 @@ function ChatPanel() {
       body.append('message', text)
       body.append('stream', 'false')
       body.append('session_id', sessionRef.current)
+      if (speaker) body.append('user_id', speaker) // agents see who is asking
       const res = await fetch(`/teams/${TEAM_ID}/runs`, { method: 'POST', body })
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
       const data = await res.json()
@@ -340,7 +385,11 @@ function ChatPanel() {
         <textarea
           value={input}
           rows={2}
-          placeholder="Talk to your Chief of Staff…  (Enter to send)"
+          placeholder={
+            person
+              ? `Talking as ${DISPLAY[person]}… (/Sai, /Bruhadish, /Sravani to switch)`
+              : 'Talk to your Chief of Staff… (/Sai, /Bruhadish or /Sravani to say who you are)'
+          }
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {

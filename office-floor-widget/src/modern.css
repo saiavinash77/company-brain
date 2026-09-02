@@ -479,6 +479,167 @@ html.mc-size-large .mc-root { font-size: 17.5px; }
   position: relative;
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+/* ---- who is talking (per-person identity switcher) ---- */
+
+.mc-who {
+  position: relative;
+}
+
+.mc-who-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 10px 0 5px;
+  border: 1px solid #dfe3ee;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #4a5165;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.15s;
+}
+
+.mc-who-btn:hover,
+.mc-who-btn.open {
+  border-color: #647cf8;
+  box-shadow: 0 0 0 3px rgba(100, 124, 248, 0.12);
+}
+
+.mc-who-btn.on {
+  border-color: #647cf8;
+  color: #4353d8;
+  background: rgba(100, 124, 248, 0.06);
+}
+
+.mc-who-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: #e8ebf7;
+  color: #4353d8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mc-who-btn.on .mc-who-avatar {
+  background: #647cf8;
+  color: #fff;
+}
+
+.mc-who-caret {
+  font-size: 9px;
+  color: #98a1b3;
+}
+
+.mc-people {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 80;
+  min-width: 232px;
+  background: #ffffff;
+  border: 1px solid #e5e8f0;
+  border-radius: 14px;
+  box-shadow: 0 18px 44px rgba(29, 33, 48, 0.16);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mc-people-head {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #98a1b3;
+  padding: 4px 8px 2px;
+}
+
+.mc-person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.mc-person:hover {
+  background: #f4f6fc;
+}
+
+.mc-person.sel {
+  background: rgba(100, 124, 248, 0.08);
+}
+
+.mc-person-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #e8ebf7;
+  color: #4353d8;
+  font-size: 13.5px;
+  font-weight: 700;
+  flex: none;
+}
+
+.mc-person.sel .mc-person-avatar {
+  background: #647cf8;
+  color: #fff;
+}
+
+.mc-person-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mc-person-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1d2130;
+}
+
+.mc-person-role {
+  font-size: 11.5px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mc-person-check {
+  margin-left: auto;
+  color: #647cf8;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.mc-people-foot {
+  border-top: 1px solid #eef0f6;
+  margin-top: 4px;
+  padding: 8px 8px 4px;
+  font-size: 11.5px;
+  color: #6b7280;
 }
 
 .mc-gear {

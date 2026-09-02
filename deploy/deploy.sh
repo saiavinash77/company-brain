@@ -146,10 +146,16 @@ make_secret() { # name, env-var-from-.env
 }
 make_secret cb-groq-api-key     GROQ_API_KEY
 make_secret cb-google-api-key   GOOGLE_API_KEY
+make_secret cb-serper-api-key   SERPER_API_KEY
 make_secret cb-twilio-sid       TWILIO_ACCOUNT_SID
 make_secret cb-twilio-token     TWILIO_AUTH_TOKEN
 make_secret cb-twilio-phone     TWILIO_PHONE_NUMBER
 make_secret cb-owner-number    OWNER_NUMBER
+# Auth0 (optional — backend accepts Auth0 tokens in addition to the passcode)
+make_secret cb-auth0-domain     AUTH0_DOMAIN
+make_secret cb-auth0-audience   AUTH0_AUDIENCE
+make_secret cb-auth0-client-id  AUTH0_CLIENT_ID
+make_secret cb-auth0-client-secret AUTH0_CLIENT_SECRET
 
 # Passcode gate: reuse an existing secret or generate one and TELL the user
 if gcloud secrets describe cb-app-passcode --project="$PROJECT" >/dev/null 2>&1; then
@@ -174,6 +180,16 @@ if ! gcloud compute networks vpc-access connectors describe cb-connector --regio
     --network=default --project="$PROJECT" --quiet
 fi
 
+# Assemble the secrets list dynamically: base secrets always, Serper/Auth0
+# only when their Secret Manager entries exist (they're optional).
+SECRET_LIST="GROQ_API_KEY=cb-groq-api-key:latest,GOOGLE_API_KEY=cb-google-api-key:latest,TWILIO_ACCOUNT_SID=cb-twilio-sid:latest,TWILIO_AUTH_TOKEN=cb-twilio-token:latest,TWILIO_PHONE_NUMBER=cb-twilio-phone:latest,OWNER_NUMBER=cb-owner-number:latest,APP_PASSCODE=cb-app-passcode:latest,DATABASE_URL=cb-database-url:latest"
+for opt in "cb-serper-api-key:SERPER_API_KEY" "cb-auth0-domain:AUTH0_DOMAIN" "cb-auth0-audience:AUTH0_AUDIENCE" "cb-auth0-client-id:AUTH0_CLIENT_ID" "cb-auth0-client-secret:AUTH0_CLIENT_SECRET"; do
+  name="${opt%%:*}"; envvar="${opt##*:}"
+  if gcloud secrets describe "$name" --project="$PROJECT" >/dev/null 2>&1; then
+    SECRET_LIST="${SECRET_LIST},${envvar}=${name}:latest"
+  fi
+done
+
 gcloud run deploy "$APP_NAME" \
   --image="$IMAGE" \
   --region="$REGION" \
@@ -185,7 +201,7 @@ gcloud run deploy "$APP_NAME" \
   --timeout=300 \
   --vpc-connector=cb-connector \
   --set-env-vars=AGENTOS_HOST=0.0.0.0,AGENTOS_PORT=8000,GATE_SECURE_COOKIE=1 \
-  --set-secrets="GROQ_API_KEY=cb-groq-api-key:latest,GOOGLE_API_KEY=cb-google-api-key:latest,TWILIO_ACCOUNT_SID=cb-twilio-sid:latest,TWILIO_AUTH_TOKEN=cb-twilio-token:latest,TWILIO_PHONE_NUMBER=cb-twilio-phone:latest,OWNER_NUMBER=cb-owner-number:latest,APP_PASSCODE=cb-app-passcode:latest,DATABASE_URL=cb-database-url:latest" \
+  --set-secrets="$SECRET_LIST" \
   --allow-unauthenticated \
   --quiet
 

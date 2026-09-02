@@ -18,6 +18,11 @@ from app.config import (
     OWNER_NUMBER,
     TWILIO_ACCOUNT_SID,
 )
+from app.identity import (
+    KNOWN_PEOPLE,
+    normalize_person,
+    people_payload,
+)
 from app.memory.super_memory import SuperMemory
 from app.telemetry.agent_events import bus
 from app.telemetry.floor_config import FLOOR_META, fixed_agents
@@ -51,6 +56,76 @@ GATE_COOKIE_MAX_AGE = 30 * 24 * 3600  # 30 days
 GATE_EXEMPT_PREFIXES = ("/health", "/webhook/", "/gate/", "/docs", "/openapi.json", "/redoc")
 
 APP_PASSCODE = os.environ.get("APP_PASSCODE", "")
+
+# ---- Auth0 (production login) ---------------------------------------------
+# When AUTH0_DOMAIN is set, requests may authenticate with an Auth0-issued
+# access token (Authorization: Bearer …) instead of the passcode cookie.
+# The UI can add "Login with Auth0" later; the backend accepts both, so the
+# passcode flow keeps working during the transition and as a fallback.
+
+AUTH0_DOMAIN = os.environ.get("AUTH0_DOMAIN", "")  # e.g. dev-xxxx.us.auth0.com
+AUTH0_AUDIENCE = os.environ.get("AUTH0_AUDIENCE", "")  # optional API identifier
+AUTH0_ALGOS = ["RS256", "RS384", "RS512"]  # Auth0 signs with RS*, never HS256
+
+_auth0_jwks_cache: dict = {"keys": [], "fetched": 0.0}
+
+
+def _auth0_token(request: Request) -> str | None:
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("bearer "):
+        return header[7:].strip()
+    # SPA access tokens are also commonly dropped in a cookie by the gateway
+    return request.cookies.get("cb_auth0")
+
+
+def _auth0_verify(token: str) -> bool:
+    """Verify an Auth0 RS256 JWT (signature against JWKS + iss/aud/exp)."""
+    import time as _time
+
+    try:
+        import jwt as pyjwt
+        from jwt.algorithms import RSAAlgorithm
+    except ImportError:  # pragma: no cover — PyJWT ships with the agno deps
+        logger.warning("PyJWT not installed — Auth0 tokens cannot be verified")
+        return False
+    if not AUTH0_DOMAIN:
+        return False
+    try:
+        header = pyjwt.get_unverified_header(token)
+        if header.get("alg") not in AUTH0_ALGOS:
+            return False
+        kid = header.get("kid")
+        now = _time.time()
+        # JWKS cached for an hour; fetched over HTTPS on demand
+        if not _auth0_jwks_cache["keys"] or now - _auth0_jwks_cache["fetched"] > 3600:
+            import ssl
+            import urllib.request
+
+            url = f"https://{AUTH0_DOMAIN}/.well-known/jwks.json"
+            with urllib.request.urlopen(url, timeout=10, context=ssl.create_default_context()) as r:
+                _auth0_jwks_cache["keys"] = json.loads(r.read()).get("keys", [])
+            _auth0_jwks_cache["fetched"] = now
+        key = next(
+            (
+                RSAAlgorithm.from_jwk(json.dumps(k))
+                for k in _auth0_jwks_cache["keys"]
+                if k.get("kid") == kid
+            ),
+            None,
+        )
+        if key is None:
+            # unknown kid: force a JWKS refresh (Auth0 rotates keys)
+            _auth0_jwks_cache["keys"] = []
+            _auth0_jwks_cache["fetched"] = 0.0
+            return False
+        kwargs = {"algorithms": [header["alg"]], "issuer": f"https://{AUTH0_DOMAIN}/"}
+        if AUTH0_AUDIENCE:
+            kwargs["audience"] = AUTH0_AUDIENCE
+        pyjwt.decode(token, key, **kwargs)
+        return True
+    except Exception as e:
+        logger.info(f"Auth0 token rejected: {e}")
+        return False
 
 
 def _gate_secret() -> bytes:
@@ -131,8 +206,10 @@ async def gate_login(request: Request):
 
 @webhook_app.middleware("http")
 async def passcode_gate(request: Request, call_next):
-    """Gate all browser traffic when APP_PASSCODE is configured; leave the
-    app fully open when it isn't (local dev). Websockets are gated inside
+    """Gate browser traffic when APP_PASSCODE is configured; leave the app
+    fully open when it isn't (local dev). Two accepted credentials:
+    the gate cookie (passcode flow) OR a valid Auth0 access token
+    (Authorization: Bearer / cb_auth0 cookie). Websockets are gated inside
     their handlers (starlette's ws middleware call_next is incompatible)."""
     if not APP_PASSCODE:
         return await call_next(request)
@@ -141,12 +218,20 @@ async def passcode_gate(request: Request, call_next):
         return await call_next(request)
     if _cookie_ok(request):
         return await call_next(request)
+    token = _auth0_token(request)
+    if token and _auth0_verify(token):
+        return await call_next(request)
     return HTMLResponse(_GATE_PAGE.format(err=""), status_code=401)
 
 
 def _cookie_ok_ws(websocket: WebSocket) -> bool:
     token = websocket.cookies.get(GATE_COOKIE, "")
-    return bool(token) and hmac.compare_digest(token, _gate_token())
+    if bool(token) and hmac.compare_digest(token, _gate_token()):
+        return True
+    # Auth0 access token dropped as a cookie (SPAs can't set Bearer headers
+    # on a websocket handshake) verifies the same way as the HTTP gate
+    auth0 = websocket.cookies.get("cb_auth0", "")
+    return bool(auth0) and _auth0_verify(auth0)
 
 
 # Build the team (stores references for webhook access)
@@ -158,6 +243,57 @@ top_agent = get_top_agent(team)
 @webhook_app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "company-brain"}
+
+
+# ---- Who is talking: per-person identity (/Sai /Bruhadish /Sravani) -------
+# The UI picks a person with a slash command and sends their id in every team
+# run. These helpers give the frontend the registry and give the agents a
+# session space of their own (session ids like "sai-a1b2c3d4") while all data
+# still lives in the one Postgres store the team can read across.
+
+@webhook_app.get("/api/people")
+async def api_people():
+    """Registry of known people — the UI builds its identity switcher from this."""
+    return {"people": people_payload()}
+
+
+def _person_from_request(request: Request) -> str | None:
+    """Person id from a query param, form field or header (order of trust)."""
+    person = request.query_params.get("person") or request.headers.get("x-cb-person", "")
+    return normalize_person(person)
+
+
+@webhook_app.get("/api/sessions/{person}")
+async def api_person_sessions(person: str, limit: int = 30):
+    """Recent team sessions belonging to one person's space.
+
+    Runs are created with user_id=<person>, and AgentOS' session store
+    filters on that natively — this proxy just forwards it. (Kept as our own
+    route so the UI has one stable, person-aware URL.)"""
+    key = normalize_person(person)
+    if not key:
+        return {"sessions": [], "error": "unknown person"}
+    try:
+        import httpx
+
+        base = f"http://127.0.0.1:{AGENTOS_PORT}"
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.get(
+                f"{base}/sessions",
+                params={"limit": limit, "user_id": key, "session_type": "team"},
+            )
+            res.raise_for_status()
+            data = res.json()
+    except Exception as e:
+        logger.warning(f"person sessions lookup failed: {e}")
+        return {"sessions": [], "error": "session store unavailable"}
+    sessions = data if isinstance(data, list) else data.get("data", [])
+    sessions = [s for s in sessions if isinstance(s, dict)]
+    sessions.sort(
+        key=lambda s: s.get("updated_at") or s.get("created_at") or "",
+        reverse=True,
+    )
+    return {"sessions": sessions[:limit], "person": KNOWN_PEOPLE[key]["display"]}
 
 
 # ---- Office-floor live status (Task: Agent Activity Floor) ----

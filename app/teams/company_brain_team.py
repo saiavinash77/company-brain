@@ -138,6 +138,7 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
         instructions=[
             "This is the Company Brain team. The Top Agent (Chief of Staff) coordinates all work.",
             "When a request comes in, the Top Agent decides whether to handle it directly or delegate.",
+            "Three named people talk to this team — Sai (owner, final decisions), Bruhadish (operations & clients) and Sravani (finance & planning). Messages are tagged with who is asking; tailor answers to that person's role and address them by name.",
             "Client Agents are spawned dynamically via the Lead Conversion workflow.",
             "Pricing requests must go through the Negotiation Agent and require owner approval.",
             "Market research requests: Market Research Agent handles them with web search.",

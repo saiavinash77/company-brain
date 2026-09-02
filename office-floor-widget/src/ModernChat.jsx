@@ -8,17 +8,56 @@ import './modern.css'
 
 const TEAM_ID = 'company-brain'
 
-function loadSessionId() {
+// ---------------------------------------------------------------------------
+// Who is talking — the company's people. Typed as a slash command (/Sai) in
+// the composer or picked from the header dropdown; remembered per browser
+// (cb_person). Every run then carries user_id=<person>, which the server
+// uses to (a) tag the message so agents know who's asking and (b) store the
+// session in that person's own space (sessions are filtered per person).
+// ---------------------------------------------------------------------------
+
+const DEFAULT_PEOPLE = [
+  { id: 'sai', display: 'Sai', slash: '/Sai', role: 'Owner' },
+  { id: 'bruhadish', display: 'Bruhadish', slash: '/Bruhadish', role: 'Operations' },
+  { id: 'sravani', display: 'Sravani', slash: '/Sravani', role: 'Finance' },
+]
+
+function loadPerson(people) {
+  try {
+    const saved = localStorage.getItem('cb_person')
+    if (saved && people.some((p) => p.id === saved)) return saved
+  } catch {
+    /* private mode */
+  }
+  return null // null = "everyone/anonymous" until the first slash or pick
+}
+
+// leading "/Sai" (any capitalization) at the start of the input switches
+// identity; the command itself is stripped from the message before sending
+const SLASH_CMD = /^\s*\/(sai|bruhadish|sravani)\b/i
+function parseSlash(text, people) {
+  const m = (text || '').match(SLASH_CMD)
+  if (!m) return null
+  const id = m[1].toLowerCase()
+  return people.find((p) => p.id === id) || null
+}
+
+function personSessionKey(person) {
+  return person ? `cb_session_id_${person}` : 'cb_session_id'
+}
+
+function loadSessionId(person) {
+  const key = personSessionKey(person)
   let sid = null
   try {
-    sid = localStorage.getItem('cb_session_id')
+    sid = localStorage.getItem(key)
   } catch {
     /* private mode etc. */
   }
   if (!sid) {
-    sid = 'web-' + Math.random().toString(36).slice(2, 10)
+    sid = (person ? person + '-' : 'web-') + Math.random().toString(36).slice(2, 10)
     try {
-      localStorage.setItem('cb_session_id', sid)
+      localStorage.setItem(key, sid)
     } catch {
       /* ignore */
     }
@@ -26,10 +65,11 @@ function loadSessionId() {
   return sid
 }
 
-function newSession() {
-  const sid = 'web-' + Math.random().toString(36).slice(2, 10)
+function newSession(person) {
+  const key = personSessionKey(person)
+  const sid = (person ? person + '-' : 'web-') + Math.random().toString(36).slice(2, 10)
   try {
-    localStorage.setItem('cb_session_id', sid)
+    localStorage.setItem(key, sid)
   } catch {
     /* ignore */
   }
@@ -41,14 +81,19 @@ function newSession() {
 // GET /sessions lists them; GET /sessions/:id/runs replays the messages.
 // ---------------------------------------------------------------------------
 
-async function fetchSessions() {
+async function fetchSessions(person) {
   try {
-    const res = await fetch('/sessions?limit=30')
+    // person-aware listing: the server filters by the user_id runs were
+    // stored with, so each person only sees their own chats
+    const url = person
+      ? `/api/sessions/${encodeURIComponent(person)}?limit=30`
+      : '/sessions?limit=30'
+    const res = await fetch(url)
     if (!res.ok) return []
     const data = await res.json()
-    const list = Array.isArray(data) ? data : data.data || []
+    const list = person ? data.sessions || [] : Array.isArray(data) ? data : data.data || []
     return list
-      .filter((s) => s.session_type === 'team')
+      .filter((s) => s.session_type === 'team' || person)
       .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
   } catch {
     return []
@@ -434,11 +479,43 @@ export default function ModernChat({ onExit }) {
   const [news, setNews] = useState(null) // null = loading, [] = unavailable
   const [recap, setRecap] = useState(null) // latest own conversation, same rules
   const [showSettings, setShowSettings] = useState(false)
+  const [showPeople, setShowPeople] = useState(false)
+  const [people, setPeople] = useState(DEFAULT_PEOPLE)
+  const [person, setPerson] = useState(null) // 'sai' | 'bruhadish' | 'sravani' | null
   const [prefs, setPrefs] = useState(loadReaderPrefs)
   const fileInputRef = useRef(null)
-  const sessionRef = useRef(loadSessionId())
+  const sessionRef = useRef(null)
   const scrollRef = useRef(null)
   const taRef = useRef(null)
+
+  // registry + last-used person, then the matching session id
+  useEffect(() => {
+    let alive = true
+    fetch('/api/people')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !d?.people?.length) return
+        setPeople(d.people)
+        setPerson((cur) => cur || loadPerson(d.people))
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  // (re)load the session for the active person
+  useEffect(() => {
+    setPerson((cur) => {
+      if (cur === undefined) return loadPerson(DEFAULT_PEOPLE)
+      return cur
+    })
+  }, [])
+  useEffect(() => {
+    sessionRef.current = loadSessionId(person)
+    refreshSessions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [person])
 
   // apply reader prefs: size class + font var on the whole chat root
   useEffect(() => {
@@ -454,16 +531,17 @@ export default function ModernChat({ onExit }) {
   useEffect(() => {
     let alive = true
     fetchTechNews(5).then((items) => alive && setNews(items))
-    fetchSessions().then((list) => {
+    fetchSessions(person).then((list) => {
       if (!alive) return
       fetchRecentConversation(list).then((r) => alive && setRecap(r))
     })
     return () => {
       alive = false
     }
-  }, [])
+  }, [person])
 
   const agents = snapshot?.agents || []
+  const personObj = person ? people.find((p) => p.id === person) : null
 
   // agents currently working — shown as live chips above the composer
   const activeAgents = agents.filter((a) => a.state === 'working' || a.state === 'handoff')
@@ -482,7 +560,23 @@ export default function ModernChat({ onExit }) {
   }
 
   const refreshSessions = () => {
-    fetchSessions().then(setSessions)
+    fetchSessions(person).then(setSessions)
+  }
+
+  // switch person: remember it, swap to that person's session + chats
+  const switchPerson = (id) => {
+    setShowPeople(false)
+    if (busy || id === person) return
+    setPerson(id)
+    try {
+      if (id) localStorage.setItem('cb_person', id)
+      else localStorage.removeItem('cb_person')
+    } catch {
+      /* ignore */
+    }
+    setMessages([WELCOME])
+    setError(null)
+    setInput('')
   }
 
   // load the recent-sessions list once, then after each completed reply
@@ -495,7 +589,7 @@ export default function ModernChat({ onExit }) {
     if (busy || sid === sessionRef.current) return
     sessionRef.current = sid
     try {
-      localStorage.setItem('cb_session_id', sid)
+      localStorage.setItem(personSessionKey(person), sid)
     } catch {
       /* ignore */
     }
@@ -546,8 +640,26 @@ export default function ModernChat({ onExit }) {
   const removeAttachment = (id) => setAttachments((a) => a.filter((x) => x.id !== id))
 
   async function send(preset) {
-    const typed = (preset ?? input).trim()
+    let typed = (preset ?? input).trim()
     if ((!typed && attachments.length === 0) || busy) return
+    // "/Sai <msg>" at the start switches the speaker and is stripped from
+    // the message; the chosen person rides along as user_id on every run
+    const slash = parseSlash(typed, people)
+    if (slash) {
+      if (slash.id !== person) {
+        setPerson(slash.id)
+        try {
+          localStorage.setItem('cb_person', slash.id)
+        } catch {
+          /* ignore */
+        }
+        sessionRef.current = loadSessionId(slash.id)
+        setMessages([WELCOME])
+      }
+      typed = typed.replace(SLASH_CMD, '').trim()
+    }
+    const speaker = slash ? slash.id : person
+    if (!typed && attachments.length === 0) return
     // Build the outgoing message: prompt + extracted file contents. The
     // attachments' text rides inline so the model can actually read them.
     const parts = []
@@ -580,6 +692,7 @@ export default function ModernChat({ onExit }) {
       body.append('message', text)
       body.append('stream', 'true')
       body.append('session_id', sessionRef.current)
+      if (speaker) body.append('user_id', speaker) // who is asking → speaker tag + own session space
       const res = await fetch(`/teams/${TEAM_ID}/runs`, { method: 'POST', body })
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
       const ctype = res.headers.get('content-type') || ''
@@ -668,6 +781,7 @@ export default function ModernChat({ onExit }) {
           body2.append('message', text)
           body2.append('stream', 'false')
           body2.append('session_id', sessionRef.current)
+          if (speaker) body2.append('user_id', speaker)
           const res2 = await fetch(`/teams/${TEAM_ID}/runs`, { method: 'POST', body: body2 })
           if (!res2.ok) throw new Error(`HTTP ${res2.status} ${res2.statusText}`)
           const data2 = await res2.json()
@@ -696,7 +810,7 @@ export default function ModernChat({ onExit }) {
 
   const startNewChat = () => {
     if (busy) return
-    sessionRef.current = newSession()
+    sessionRef.current = newSession(person)
     setMessages([WELCOME])
     setError(null)
   }
@@ -744,7 +858,7 @@ export default function ModernChat({ onExit }) {
 
         <div className="mc-sessions">
           <div className="mc-side-label">
-            recent chats
+            {person ? `${personObj?.display}'s chats` : 'recent chats'}
             {sessions.length > 0 && <span className="mc-sess-count">{sessions.length}</span>}
           </div>
           {sessions.length === 0 && <div className="mc-side-empty">no saved chats yet</div>}
@@ -787,10 +901,51 @@ export default function ModernChat({ onExit }) {
             coordinate-mode team · {agents.length} specialists
           </div>
           <div className="mc-header-actions">
+            {/* who is talking — /Sai-style slash names; agents tailor answers
+                to this person and the session lives in their own space */}
+            <div className="mc-who">
+              <button
+                className={`mc-who-btn ${person ? 'on' : ''} ${showPeople ? 'open' : ''}`}
+                onClick={() => {
+                  setShowPeople((v) => !v)
+                  setShowSettings(false)
+                }}
+                title="Who is talking — agents answer as this person"
+              >
+                <span className="mc-who-avatar">{(personObj?.display || '?').slice(0, 1)}</span>
+                <span className="mc-who-name">{personObj?.display || 'who?'}</span>
+                <span className="mc-who-caret">▾</span>
+              </button>
+              {showPeople && (
+                <div className="mc-people">
+                  <div className="mc-people-head">who is talking?</div>
+                  {people.map((p) => (
+                    <button
+                      key={p.id}
+                      className={`mc-person ${person === p.id ? 'sel' : ''}`}
+                      onClick={() => switchPerson(p.id)}
+                    >
+                      <span className="mc-person-avatar">{p.display.slice(0, 1)}</span>
+                      <span className="mc-person-body">
+                        <span className="mc-person-name">{p.display}</span>
+                        <span className="mc-person-role">{p.role}</span>
+                      </span>
+                      {person === p.id && <span className="mc-person-check">✓</span>}
+                    </button>
+                  ))}
+                  <div className="mc-people-foot">
+                    or start any message with <b>{personObj?.slash || '/Sai'}</b>
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               className={`mc-gear ${showSettings ? 'on' : ''}`}
               title="Text size & font"
-              onClick={() => setShowSettings((v) => !v)}
+              onClick={() => {
+                setShowSettings((v) => !v)
+                setShowPeople(false)
+              }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                 <path
@@ -1033,7 +1188,11 @@ export default function ModernChat({ onExit }) {
               ref={taRef}
               className="mc-input"
               rows={1}
-              placeholder="Message Company Brain — or drop / paste a file…"
+              placeholder={
+                person
+                  ? `Message Company Brain as ${personObj?.display}… (/Bruhadish, /Sravani to switch)`
+                  : 'Message Company Brain — /Sai, /Bruhadish or /Sravani to say who you are…'
+              }
               value={input}
               onChange={(e) => {
                 setInput(e.target.value)
