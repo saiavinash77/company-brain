@@ -241,18 +241,23 @@ def instrument_agent(agent, agent_id: str | None = None) -> str:
         _exit_run(aid, aname, summary)
         return result
 
-    async def arun_wrapper(*args, **kwargs):
-        streaming = bool(kwargs.get("stream"))
-        if not streaming:
-            summary = summarize(kwargs.get("input") or (args[0] if args else ""))
-            _enter_run(aid, aname, summary)
-            try:
-                result = await orig_arun(*args, **kwargs)
-            except Exception:
-                _exit_run(aid, aname, f"error: {summary}")
-                raise
-            _exit_run(aid, aname, summary)
-            return result
+    # Same duality as the class-level patch below: arun(stream=True) must
+    # return an async generator, arun otherwise a coroutine — never one
+    # wrapper type for both.
+    def arun_wrapper(*args, **kwargs):
+        if not kwargs.get("stream"):
+            async def run_coro():
+                summary = summarize(kwargs.get("input") or (args[0] if args else ""))
+                _enter_run(aid, aname, summary)
+                try:
+                    result = await orig_arun(*args, **kwargs)
+                except Exception:
+                    _exit_run(aid, aname, f"error: {summary}")
+                    raise
+                _exit_run(aid, aname, summary)
+                return result
+
+            return run_coro()
 
         async def stream_gen():
             summary = summarize(kwargs.get("input") or (args[0] if args else ""))
@@ -301,19 +306,27 @@ def instrument_agno_classes() -> None:
         return slugify(name), name
 
     def _wrap_arun(orig_arun):
-        async def arun_wrapper(self, *args, **kwargs):
+        # Agno v2's Agent/Team.arun is a PLAIN function that returns either a
+        # coroutine (stream=False) or an async generator (stream=True), and
+        # AgentOS consumes it accordingly (`await` vs `async for`). The
+        # wrapper must preserve that duality: an `async def` wrapper always
+        # returns a coroutine, which breaks `async for ... in arun(...)` with
+        # TeamRunError "'async for' requires an object with __aiter__".
+        def arun_wrapper(self, *args, **kwargs):
             aid, aname = _ids(self)
-            streaming = bool(kwargs.get("stream"))
-            if not streaming:
-                summary = summarize(kwargs.get("input") or (args[0] if args else ""))
-                _enter_run(aid, aname, summary)
-                try:
-                    result = await orig_arun(self, *args, **kwargs)
-                except Exception:
-                    _exit_run(aid, aname, f"error: {summary}")
-                    raise
-                _exit_run(aid, aname, summary)
-                return result
+            if not kwargs.get("stream"):
+                async def run_coro():
+                    summary = summarize(kwargs.get("input") or (args[0] if args else ""))
+                    _enter_run(aid, aname, summary)
+                    try:
+                        result = await orig_arun(self, *args, **kwargs)
+                    except Exception:
+                        _exit_run(aid, aname, f"error: {summary}")
+                        raise
+                    _exit_run(aid, aname, summary)
+                    return result
+
+                return run_coro()
 
             async def stream_gen():
                 summary = summarize(kwargs.get("input") or (args[0] if args else ""))

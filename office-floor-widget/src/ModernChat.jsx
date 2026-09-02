@@ -164,7 +164,7 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;')
 }
 
-function renderMarkdown(md) {
+export function renderMarkdown(md) {
   let html = escapeHtml(String(md || ''))
 
   // fenced code blocks first (protect their contents from other rules)
@@ -573,20 +573,122 @@ export default function ModernChat({ onExit }) {
     ])
     setBusy(true)
     try {
+      // stream=true: reply tokens arrive as SSE and render progressively.
+      // The event payload shape is tolerant (content | delta | text fields,
+      // bare strings, JSON-wrapped) because AgentOS event classes vary.
       const body = new FormData()
       body.append('message', text)
-      body.append('stream', 'false')
+      body.append('stream', 'true')
       body.append('session_id', sessionRef.current)
       const res = await fetch(`/teams/${TEAM_ID}/runs`, { method: 'POST', body })
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
-      const data = await res.json()
-      const reply =
-        (typeof data?.content === 'string' && data.content.trim()) ||
-        '(no content returned)'
-      setMessages((m) => [...m, { role: 'brain', text: reply }])
+      const ctype = res.headers.get('content-type') || ''
+
+      let streamed = ''
+      if (ctype.includes('text/event-stream')) {
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
+        let dispatch = () => {}
+        // placeholder brain message; its text is updated as tokens arrive
+        setMessages((m) => [...m, { role: 'brain', text: '' }])
+        const updateLast = (chunk) => {
+          streamed += chunk
+          setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: streamed } : x)))
+        }
+        // SSE frames: blank-line separated; each has "event:" and/or "data:"
+        // AgentOS team events observed live:
+        //   TeamRunContent        — incremental answer tokens in `content`
+        //                           (gpt-oss also streams `reasoning_content`
+        //                           thinking chunks, which we skip)
+        //   TeamRunContentCompleted / TeamRunCompleted — full final text
+        const handleFrame = (frame) => {
+          let evName = ''
+          let dataStr = ''
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event:')) evName = line.slice(6).trim()
+            else if (line.startsWith('data:')) dataStr += line.slice(5).trim()
+          }
+          if (!dataStr) return
+          if (evName.includes('error') || evName.includes('Error')) {
+            throw new Error(dataStr.slice(0, 300))
+          }
+          let d = null
+          try {
+            d = JSON.parse(dataStr)
+          } catch {
+            return // keep-alive comment or non-JSON payload
+          }
+          const ev = d.event || evName || ''
+          if (ev.includes('Error')) return
+          if (ev === 'TeamRunContent') {
+            const c = d.content
+            if (typeof c === 'string' && c && !d.reasoning_content) updateLast(c)
+            return
+          }
+          if (ev === 'TeamRunCompleted' || ev === 'TeamRunContentCompleted') {
+            // authoritative final text — replace whatever we accumulated
+            // (identical when streaming worked; a fix-up if chunks were missed)
+            const full = typeof d.content === 'string' ? d.content : ''
+            if (full) {
+              streamed = full
+              setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: full } : x)))
+            }
+            return
+          }
+          // any other streaming format: tolerate delta/text fields
+          const piece =
+            (typeof d.delta === 'string' && d.delta) ||
+            (typeof d.text === 'string' && d.text) ||
+            (typeof d.content === 'string' && d.content) ||
+            (typeof d === 'string' && d) ||
+            ''
+          if (piece && !d.reasoning_content) updateLast(piece)
+        }
+        dispatch = handleFrame
+        let reading = true
+        while (reading) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          let idx
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            const frame = buf.slice(0, idx)
+            buf = buf.slice(idx + 2)
+            dispatch(frame)
+          }
+        }
+        if (buf.trim()) dispatch(buf)
+        // ensure the last message carries the final text
+        if (streamed) {
+          setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: streamed } : x)))
+        } else {
+          // stream produced no usable tokens — fall back to a plain run
+          const body2 = new FormData()
+          body2.append('message', text)
+          body2.append('stream', 'false')
+          body2.append('session_id', sessionRef.current)
+          const res2 = await fetch(`/teams/${TEAM_ID}/runs`, { method: 'POST', body: body2 })
+          if (!res2.ok) throw new Error(`HTTP ${res2.status} ${res2.statusText}`)
+          const data2 = await res2.json()
+          const reply2 =
+            (typeof data2?.content === 'string' && data2.content.trim()) ||
+            '(no content returned)'
+          setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: reply2 } : x)))
+        }
+      } else {
+        // not SSE — server answered with plain JSON
+        const data = await res.json()
+        const reply =
+          (typeof data?.content === 'string' && data.content.trim()) ||
+          '(no content returned)'
+        setMessages((m) => [...m, { role: 'brain', text: reply }])
+      }
       refreshSessions() // the new exchange becomes a visible recent chat
     } catch (e) {
       setError(e?.message ? String(e.message) : String(e))
+      // drop the empty streaming placeholder if nothing arrived
+      setMessages((m) => (m.length > 1 && m[m.length - 1].role === 'brain' && !m[m.length - 1].text ? m.slice(0, -1) : m))
     } finally {
       setBusy(false)
     }
@@ -766,7 +868,7 @@ export default function ModernChat({ onExit }) {
                   </div>
                   <div className="mc-brain-body">
                     <div className="mc-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }} />
-                    {i > 0 && <CopyButton text={m.text} />}
+                    {i > 0 && m.text && <CopyButton text={m.text} />}
                   </div>
                 </div>
               ),

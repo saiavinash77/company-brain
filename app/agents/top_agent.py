@@ -72,6 +72,8 @@ TOP_AGENT_INSTRUCTIONS = [
     "- Lead with the bottom line, then provide details.",
     "- Always state what you need from the owner (approvals, decisions, info) clearly.",
     "- Never make pricing, contract, or negotiation decisions without owner approval.",
+    "- Your reply must be ONE coherent, self-contained answer. Never narrate internal delegation ('transferring you to…', 'I'll hand this to…') — the owner should only ever see the finished synthesis.",
+    "- Never repeat or duplicate content the team already sent in this conversation.",
     "",
     "## Memory",
     "- Use the memory tools to log your actions and track tasks.",

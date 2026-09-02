@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { FloorScene } from './floor/FloorScene.js'
 import { useAgentStatus } from './floor/useAgentStatus.js'
 import { COLORS, WORLD, stateColor } from './floor/tokens.js'
-import ModernChat from './ModernChat.jsx'
+import ModernChat, { renderMarkdown } from './ModernChat.jsx'
 
 const TEAM_ID = 'company-brain'
 
@@ -321,7 +321,16 @@ function ChatPanel() {
       <div className="chat-scroll" ref={scrollRef}>
         {messages.map((m, i) => (
           <div key={i} className={`msg ${m.role}`}>
-            {m.text}
+            {m.role === 'brain' ? (
+              // team replies are markdown (tables, lists, bold) — render them
+              // as such; raw text dumps of "|" rows were unreadable
+              <div
+                className="wb-md"
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }}
+              />
+            ) : (
+              m.text
+            )}
           </div>
         ))}
         {busy && <div className="msg brain typing">thinking…</div>}
