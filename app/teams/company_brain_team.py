@@ -14,7 +14,7 @@ from app.agents.strategy_agent import create_strategy_agent
 from app.agents.top_agent import create_top_agent
 from app.agents.briefing_agent import create_briefing_agent
 from app.memory.super_memory import SuperMemory
-from app.models.groq_model import get_groq_llama
+from app.models.groq_model import get_team_model
 from app.providers.gmail_provider import GmailProvider
 from app.providers.memory_provider import MemoryProvider
 from app.providers.telegram_provider import TelegramProvider
@@ -121,7 +121,7 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
     team = Team(
         name="Company Brain",
         id="company-brain",
-        model=get_groq_llama(),
+        model=get_team_model(),
         mode=TeamMode.coordinate,
         members=[
             top_agent,
@@ -139,6 +139,8 @@ def build_company_brain_team(memory: SuperMemory) -> Team:
             "This is the Company Brain team. The Top Agent (Chief of Staff) coordinates all work.",
             "When a request comes in, the Top Agent decides whether to handle it directly or delegate.",
             "Three named people talk to this team — Sai (owner, final decisions), Bruhadish (operations & clients) and Sravani (finance & planning). Messages are tagged with who is asking; tailor answers to that person's role and address them by name.",
+            "Chats happen inside client folders — a message may concern a specific client (its session id carries client/<name>/). When someone mentions a new client or asks to set one up, offer to create their folder so all of that client's work lives in one place.",
+            "When someone attaches a file, its extracted text arrives inline in [Attached file: …] blocks. Read and use that text directly — never claim you cannot open or extract files. If a block says the contents could not be read, ask for a better format instead (PNG screenshot, PDF, DOCX, or plain pasted text).",
             "Client Agents are spawned dynamically via the Lead Conversion workflow.",
             "Pricing requests must go through the Negotiation Agent and require owner approval.",
             "Market research requests: Market Research Agent handles them with web search.",

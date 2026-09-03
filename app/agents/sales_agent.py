@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.groq_model import get_groq_llama
+from app.models.groq_model import get_member_model
 
 
 SALES_AGENT_INSTRUCTIONS = [
@@ -39,7 +39,7 @@ def create_sales_agent() -> Agent:
     return Agent(
         name="Sales Agent",
         role="Qualify leads, score them, draft first replies, and manage the pipeline",
-        model=get_groq_llama(),
+        model=get_member_model(),
         instructions=SALES_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         add_memories_to_context=True,

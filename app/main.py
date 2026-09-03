@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -20,8 +21,12 @@ from app.config import (
 )
 from app.identity import (
     KNOWN_PEOPLE,
+    client_session_prefix,
+    list_clients,
     normalize_person,
+    parse_client_slash,
     people_payload,
+    register_client,
 )
 from app.memory.super_memory import SuperMemory
 from app.telemetry.agent_events import bus
@@ -257,6 +262,64 @@ async def api_people():
     return {"people": people_payload()}
 
 
+# ---- Client folders (per-client workspaces) --------------------------------
+
+@webhook_app.get("/api/clients")
+async def api_clients():
+    """All client folders — the sidebar's 'Clients' section."""
+    return {"clients": list_clients()}
+
+
+@webhook_app.post("/api/clients")
+async def api_create_client(request: Request):
+    """Create a client folder: {"name": "Cake Magic"}. Idempotent."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return {"error": "name required"}
+    client = register_client(name)
+    return {"client": client}
+
+
+@webhook_app.get("/api/clients/{slug}/sessions")
+async def api_client_sessions(slug: str, request: Request, limit: int = 30):
+    """Sessions filed under one client folder.
+
+    Client chats are ordinary team sessions whose session_id starts with
+    client/<slug>/ — the store keeps them with everyone else (one Postgres,
+    tools can read across) and this route filters the listing per folder."""
+    prefix = client_session_prefix(slug)
+    if prefix == "client//":  # empty slug -> unknown client
+        return {"sessions": [], "error": "unknown client"}
+    try:
+        import httpx
+
+        base = str(request.base_url).rstrip("/")
+        if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
+            base = base.replace("http://", "https://", 1)
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.get(
+                f"{base}/sessions",
+                params={"limit": 100, "session_type": "team"},
+                cookies=request.cookies,
+            )
+            res.raise_for_status()
+            data = res.json()
+    except Exception as e:
+        logger.warning(f"client sessions lookup failed: {e}")
+        return {"sessions": [], "error": "session store unavailable"}
+    sessions = data if isinstance(data, list) else data.get("data", [])
+    sessions = [s for s in sessions if isinstance(s, dict) and str(s.get("session_id", "")).startswith(prefix)]
+    sessions.sort(
+        key=lambda s: s.get("updated_at") or s.get("created_at") or "",
+        reverse=True,
+    )
+    return {"sessions": sessions[:limit], "client": slug}
+
+
 def _person_from_request(request: Request) -> str | None:
     """Person id from a query param, form field or header (order of trust)."""
     person = request.query_params.get("person") or request.headers.get("x-cb-person", "")
@@ -302,6 +365,71 @@ async def api_person_sessions(person: str, request: Request, limit: int = 30):
         reverse=True,
     )
     return {"sessions": sessions[:limit], "person": KNOWN_PEOPLE[key]["display"]}
+
+
+# ---- File extraction (attachments the browser can't read) -----------------
+# PDFs and plain text are extracted client-side (pdfjs / FileReader) — fast
+# and free. Images (screenshots), DOCX and XLSX are NOT readable in the
+# browser, which is why the team used to answer "I can't extract that file".
+# This endpoint reads them server-side with Mistral OCR (works on images and
+# documents alike) and returns markdown text that rides inline in the message.
+
+MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "")
+OCR_MAX_BYTES = 12 * 1024 * 1024  # 12 MB upload cap
+
+
+@webhook_app.post("/api/extract-file")
+async def api_extract_file(request: Request):
+    """Extract text from a file the browser can't read (image/docx/xlsx/pdf).
+
+    Multipart 'file' in, {"name", "text", "note"} out. Falls back gracefully:
+    when OCR is unavailable the caller gets a clear note instead of an error,
+    and the team is told the file exists but wasn't read."""
+    if not MISTRAL_API_KEY:
+        return {"error": "extraction unavailable (no OCR key configured)"}
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or isinstance(upload, str):
+        return {"error": "no file supplied"}
+    if (getattr(upload, "size", 0) or 0) > OCR_MAX_BYTES:
+        return {"error": f"file too large (max {OCR_MAX_BYTES // (1024*1024)} MB)"}
+
+    data = await upload.read()
+    mime = getattr(upload, "content_type", "") or ""
+    name = getattr(upload, "filename", "") or "file"
+    kind = "image_url" if mime.startswith("image/") else "document_url"
+    b64 = base64.b64encode(data).decode()
+
+    import urllib.request
+
+    req = urllib.request.Request(
+        "https://api.mistral.ai/v1/ocr",
+        data=json.dumps(
+            {
+                "model": "mistral-ocr-latest",
+                kind: f"data:{mime or 'application/octet-stream'};base64,{b64}",
+            }
+        ).encode(),
+        headers={
+            "Authorization": f"Bearer {MISTRAL_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            payload = json.loads(r.read())
+    except Exception as e:
+        logger.warning(f"OCR extraction failed for {name}: {e}")
+        return {"error": "could not read this file"}
+
+    pages = payload.get("pages", [])
+    text = "\n\n".join((p.get("markdown") or "") for p in pages).strip()
+    if not text:
+        # scanned image with no detectable text, empty doc, etc.
+        text = ""
+    note = f"OCR, {len(pages)} page(s)"
+    return {"name": name, "text": text[:60000], "note": note}
 
 
 # ---- Office-floor live status (Task: Agent Activity Floor) ----
@@ -405,16 +533,9 @@ async def settings_status():
     }
 
 
-@webhook_app.get("/api/clients")
-async def list_clients():
-    conversion = get_lead_conversion(team)
-    clients = conversion.list_client_agents()
-    return {
-        "clients": [
-            {"client_id": cid, "agent_name": agent.name}
-            for cid, agent in clients.items()
-        ]
-    }
+# (Legacy /api/clients client-agents listing removed — superseded by the
+# client-folders registry routes above: GET/POST /api/clients + per-folder
+# session listings.)
 
 
 @webhook_app.post("/webhook/telegram")

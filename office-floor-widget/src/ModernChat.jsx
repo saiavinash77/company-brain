@@ -46,11 +46,72 @@ function personSessionKey(person) {
   return person ? `cb_session_id_${person}` : 'cb_session_id'
 }
 
+// Session id inside a client folder: client/<slug>/<person>-<rand>. The
+// prefix is what the server's /api/clients/:slug/sessions filters on.
+function folderSessionId(person, client) {
+  if (!client) return loadSessionId(person) // general space
+  const slug = String(client.id || client.name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+  const who = person || 'web'
+  const key = `cb_session_id_client_${slug}_${who}`
+  let sid = null
+  try {
+    sid = localStorage.getItem(key)
+  } catch {
+    /* private mode */
+  }
+  if (!sid) {
+    sid = `client/${slug}/${who}-${Math.random().toString(36).slice(2, 10)}`
+    try {
+      localStorage.setItem(key, sid)
+    } catch {
+      /* ignore */
+    }
+  }
+  return sid
+}
+
+// "/client cake magic" switches into that client's folder (creates it if
+// new); the command itself is stripped from the message.
+const CLIENT_CMD = /^\s*\/client\s+([\w .&-]+)\s*$/i
+
 // Agno auto-names sessions from the first message — which carries the
 // "[Sai is asking — Owner — …]" speaker tag we prepend for the agents.
 // Strip it so the sidebar shows the person's actual first words.
 function cleanSessionTitle(name) {
   return (name || '').replace(/^\[[^\]]*\]\s*/, '')
+}
+
+// Human labels for what the team is doing while the owner waits. Tool names
+// arrive in ToolCallStarted/Completed SSE events; without this the raw
+// "search_web(max_results=10, query=...) completed in 1.4s" line was shown
+// in the chat as if it were the answer.
+const TOOL_LABELS = [
+  [/^search_web$|serper|duckduck/i, 'Searching the web…'],
+  [/memory|get_documents|knowledge|playbook/i, 'Checking our records…'],
+  [/send_whatsapp|send_message|twilio|telegram/i, 'Sending a message…'],
+  [/gmail|send_email|read_email/i, 'Working with email…'],
+  [/price|pricing|calculate|compute/i, 'Running the numbers…'],
+  [/convert|lead/i, 'Setting up the client…'],
+  [/file|document|extract|read/i, 'Reading documents…'],
+]
+
+function toolLabel(toolName) {
+  const name = String(toolName || '')
+  for (const [re, label] of TOOL_LABELS) if (re.test(name)) return label
+  return 'Working…'
+}
+
+// A rate limit (or any run error) should read as one calm sentence, not a
+// raw RunError JSON dump.
+function friendlyError(msg) {
+  const s = String(msg || '')
+  if (/rate.?limit/i.test(s) || /\b429\b/.test(s)) return 'The team hit its thinking speed-limit — please send that again in about a minute.'
+  if (/timeout/i.test(s)) return 'That took too long to answer — please try again.'
+  return s.slice(0, 200)
 }
 
 function loadSessionId(person) {
@@ -179,17 +240,42 @@ async function extractFileText(file) {
       text += content.items.map((i) => i.str).join(' ') + '\n\n'
     }
     const more = pdf.numPages > PDF_PAGE_CAP ? ` (only first ${PDF_PAGE_CAP} of ${pdf.numPages} pages read)` : ''
-    return { name, text: text.slice(0, TEXT_CHAR_CAP).trim(), note: `PDF, ${pdf.numPages} pages${more}` }
+    const out = { name, text: text.slice(0, TEXT_CHAR_CAP).trim(), note: `PDF, ${pdf.numPages} pages${more}` }
+    if (out.text) return out
+    // scanned PDF with no text layer → let the server OCR it
+    return extractServerSide(file)
   }
   if (isTextFile(name, file.type)) {
     const raw = await file.text()
     return { name, text: raw.slice(0, TEXT_CHAR_CAP), note: 'text' }
   }
-  // Binary we can't read: still tell the team the file exists
+  // Images, DOCX, XLSX… — the browser can't read these. The server's OCR
+  // endpoint can (Mistral OCR reads screenshots and office documents).
+  const server = await extractServerSide(file)
+  if (server) return server
+  // Binary we can't read anywhere: still tell the team the file exists
   return {
     name,
     text: '',
-    note: `${file.type || 'unknown type'}, ${(file.size / 1024).toFixed(0)} KB — contents could not be read in the browser`,
+    note: `${file.type || 'unknown type'}, ${(file.size / 1024).toFixed(0)} KB — contents could not be read`,
+  }
+}
+
+// Server-side extraction (images / office docs / scanned PDFs) — POST the
+// raw file to /api/extract-file, get OCR'd markdown text back.
+async function extractServerSide(file) {
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    const res = await fetch('/api/extract-file', { method: 'POST', body })
+    if (!res.ok) return null
+    const d = await res.json()
+    if (d && typeof d.text === 'string') {
+      return { name: d.name || file.name, text: d.text.slice(0, TEXT_CHAR_CAP), note: d.note || 'OCR' }
+    }
+    return null
+  } catch {
+    return null
   }
 }
 
@@ -487,6 +573,11 @@ export default function ModernChat({ onExit }) {
   const [recap, setRecap] = useState(null) // latest own conversation, same rules
   const [showSettings, setShowSettings] = useState(false)
   const [showPeople, setShowPeople] = useState(false)
+  const [showAgents, setShowAgents] = useState(false)
+  const [clients, setClients] = useState([]) // client folders
+  const [activeClient, setActiveClient] = useState(null) // {id, name} | null
+  const [showNewClient, setShowNewClient] = useState(false)
+  const [newClientName, setNewClientName] = useState('')
   const [people, setPeople] = useState(DEFAULT_PEOPLE)
   const [person, setPerson] = useState(null) // 'sai' | 'bruhadish' | 'sravani' | null
   const [prefs, setPrefs] = useState(loadReaderPrefs)
@@ -518,6 +609,73 @@ export default function ModernChat({ onExit }) {
       return cur
     })
   }, [])
+
+  // ---- client folders ----------------------------------------------------
+  const refreshClients = () => {
+    fetch('/api/clients')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.clients && setClients(d.clients))
+      .catch(() => {})
+  }
+  useEffect(() => {
+    refreshClients()
+  }, [])
+
+  const selectClient = (client) => {
+    if (busy) return
+    setActiveClient(client)
+    try {
+      if (client) localStorage.setItem('cb_client', client.id)
+      else localStorage.removeItem('cb_client')
+    } catch {
+      /* ignore */
+    }
+    // swap to the folder's session space (each folder = its own session id)
+    sessionRef.current = folderSessionId(person, client)
+    setMessages([WELCOME])
+    setError(null)
+    setInput('')
+    // load this folder's chats (or the person's general chats)
+    loadFolderSessions()
+  }
+
+  const createClient = (name) => {
+    fetch('/api/clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d?.client) return
+        refreshClients()
+        selectClient(d.client)
+      })
+      .catch(() => {})
+  }
+
+  const loadFolderSessions = () => {
+    if (activeClient || true) {
+      // current folder's chats: client → /api/clients/:slug/sessions,
+      // general → the person's session list
+      const loader = activeClient
+        ? fetch(`/api/clients/${encodeURIComponent(activeClient.id)}/sessions?limit=30`)
+            .then((r) => (r.ok ? r.json() : { sessions: [] }))
+            .then((d) => d.sessions || [])
+        : fetchSessions(person)
+      loader.then(setSessions).catch(() => setSessions([]))
+    }
+  }
+
+  // re-focus the folder when the person changes (folders are per person too)
+  useEffect(() => {
+    const saved = localStorage.getItem('cb_client')
+    if (saved && clients.length > 0) {
+      const c = clients.find((x) => x.id === saved)
+      if (c) setActiveClient(c)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients.length])
   useEffect(() => {
     sessionRef.current = loadSessionId(person)
     refreshSessions()
@@ -567,7 +725,14 @@ export default function ModernChat({ onExit }) {
   }
 
   const refreshSessions = () => {
-    fetchSessions(person).then(setSessions)
+    if (activeClient) {
+      fetch(`/api/clients/${encodeURIComponent(activeClient.id)}/sessions?limit=30`)
+        .then((r) => (r.ok ? r.json() : { sessions: [] }))
+        .then((d) => setSessions(d.sessions || []))
+        .catch(() => {})
+    } else {
+      fetchSessions(person).then(setSessions)
+    }
   }
 
   // switch person: remember it, swap to that person's session + chats
@@ -649,6 +814,21 @@ export default function ModernChat({ onExit }) {
   async function send(preset) {
     let typed = (preset ?? input).trim()
     if ((!typed && attachments.length === 0) || busy) return
+    // "/client <name>" — switch into (or create) that client's folder first
+    const clientMatch = typed.match(CLIENT_CMD)
+    if (clientMatch) {
+      const name = clientMatch[1].trim()
+      const existing = clients.find(
+        (c) => c.name.toLowerCase() === name.toLowerCase() || c.id === name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      )
+      if (existing) {
+        selectClient(existing)
+      } else {
+        createClient(name)
+      }
+      setInput('')
+      return
+    }
     // "/Sai <msg>" at the start switches the speaker and is stripped from
     // the message; the chosen person rides along as user_id on every run
     const slash = parseSlash(typed, people)
@@ -704,81 +884,107 @@ export default function ModernChat({ onExit }) {
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
       const ctype = res.headers.get('content-type') || ''
 
-      let streamed = ''
-      if (ctype.includes('text/event-stream')) {
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder()
-        let buf = ''
-        let dispatch = () => {}
-        // placeholder brain message; its text is updated as tokens arrive
-        setMessages((m) => [...m, { role: 'brain', text: '' }])
-        const updateLast = (chunk) => {
-          streamed += chunk
-          setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: streamed } : x)))
-        }
-        // SSE frames: blank-line separated; each has "event:" and/or "data:"
-        // AgentOS team events observed live:
-        //   TeamRunContent        — incremental answer tokens in `content`
-        //                           (gpt-oss also streams `reasoning_content`
-        //                           thinking chunks, which we skip)
-        //   TeamRunContentCompleted / TeamRunCompleted — full final text
-        const handleFrame = (frame) => {
-          let evName = ''
-          let dataStr = ''
-          for (const line of frame.split('\n')) {
-            if (line.startsWith('event:')) evName = line.slice(6).trim()
-            else if (line.startsWith('data:')) dataStr += line.slice(5).trim()
+        let streamed = ''
+        let toolStatus = ''
+        if (ctype.includes('text/event-stream')) {
+          const reader = res.body.getReader()
+          const decoder = new TextDecoder()
+          let buf = ''
+          let dispatch = () => {}
+          // placeholder brain message; its text is updated as tokens arrive
+          setMessages((m) => [...m, { role: 'brain', text: '' }])
+          const updateLast = (chunk) => {
+            streamed += chunk
+            setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: streamed } : x)))
           }
-          if (!dataStr) return
-          if (evName.includes('error') || evName.includes('Error')) {
-            throw new Error(dataStr.slice(0, 300))
+          const setBusyStatus = (label) => {
+            if (label === toolStatus) return
+            toolStatus = label
+            setMessages((m) =>
+              m.map((x, i) => (i === m.length - 1 ? { ...x, status: label } : x)),
+            )
           }
-          let d = null
-          try {
-            d = JSON.parse(dataStr)
-          } catch {
-            return // keep-alive comment or non-JSON payload
-          }
-          const ev = d.event || evName || ''
-          if (ev.includes('Error')) return
-          if (ev === 'TeamRunContent') {
-            const c = d.content
-            if (typeof c === 'string' && c && !d.reasoning_content) updateLast(c)
-            return
-          }
-          if (ev === 'TeamRunCompleted' || ev === 'TeamRunContentCompleted') {
-            // authoritative final text — replace whatever we accumulated
-            // (identical when streaming worked; a fix-up if chunks were missed)
-            const full = typeof d.content === 'string' ? d.content : ''
-            if (full) {
-              streamed = full
-              setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: full } : x)))
+          // SSE frames: blank-line separated; each has "event:" and/or "data:"
+          // AgentOS team events observed live:
+          //   TeamRunContent        — incremental answer tokens in `content`
+          //                           (gpt-oss also streams `reasoning_content`
+          //                           thinking chunks, which we skip)
+          //   TeamToolCallStarted / TeamToolCallCompleted — the team is using
+          //                           a tool; shown as a friendly status line
+          //                           under the reply, never as reply text
+          //   TeamRunContentCompleted / TeamRunCompleted — full final text
+          const handleFrame = (frame) => {
+            let evName = ''
+            let dataStr = ''
+            for (const line of frame.split('\n')) {
+              if (line.startsWith('event:')) evName = line.slice(6).trim()
+              else if (line.startsWith('data:')) dataStr += line.slice(5).trim()
             }
-            return
+            if (!dataStr) return
+            let d = null
+            try {
+              d = JSON.parse(dataStr)
+            } catch {
+              return // keep-alive comment or non-JSON payload
+            }
+            const ev = d.event || evName || ''
+            if (ev === 'TeamToolCallStarted') {
+              setBusyStatus(toolLabel(d.tool?.tool_name))
+              return
+            }
+            if (ev === 'TeamToolCallCompleted') {
+              // the tool's raw result text must never become the answer
+              if (typeof d.content === 'string' && !streamed) {
+                setBusyStatus(toolLabel(d.tool?.tool_name))
+              }
+              return
+            }
+            if (ev.includes('Error') || evName.includes('error')) {
+              const detail = d.content?.error || d.content || d.message || dataStr
+              throw new Error(friendlyError(typeof detail === 'string' ? detail : JSON.stringify(detail)))
+            }
+            if (ev === 'TeamRunContent') {
+              const c = d.content
+              if (typeof c === 'string' && c && !d.reasoning_content) updateLast(c)
+              return
+            }
+            if (ev === 'TeamRunCompleted' || ev === 'TeamRunContentCompleted') {
+              // authoritative final text — replace whatever we accumulated
+              // (identical when streaming worked; a fix-up if chunks were missed)
+              const full = typeof d.content === 'string' ? d.content : ''
+              if (full) {
+                streamed = full
+                setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: full, status: '' } : x)))
+              }
+              return
+            }
+            // any other streaming format: tolerate delta/text fields — but
+            // never anything from a tool event (those carry tool results)
+            if (ev.includes('Tool') || ev.includes('tool')) return
+            const piece =
+              (typeof d.delta === 'string' && d.delta) ||
+              (typeof d.text === 'string' && d.text) ||
+              (typeof d.content === 'string' && d.content) ||
+              (typeof d === 'string' && d) ||
+              ''
+            if (piece && !d.reasoning_content) updateLast(piece)
           }
-          // any other streaming format: tolerate delta/text fields
-          const piece =
-            (typeof d.delta === 'string' && d.delta) ||
-            (typeof d.text === 'string' && d.text) ||
-            (typeof d.content === 'string' && d.content) ||
-            (typeof d === 'string' && d) ||
-            ''
-          if (piece && !d.reasoning_content) updateLast(piece)
-        }
-        dispatch = handleFrame
-        let reading = true
-        while (reading) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buf += decoder.decode(value, { stream: true })
-          let idx
-          while ((idx = buf.indexOf('\n\n')) >= 0) {
-            const frame = buf.slice(0, idx)
-            buf = buf.slice(idx + 2)
-            dispatch(frame)
+          dispatch = handleFrame
+          let reading = true
+          while (reading) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buf += decoder.decode(value, { stream: true })
+            let idx
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+              const frame = buf.slice(0, idx)
+              buf = buf.slice(idx + 2)
+              dispatch(frame)
+            }
           }
-        }
-        if (buf.trim()) dispatch(buf)
+          if (buf.trim()) dispatch(buf)
+          // clear the status chip once the stream ends
+          setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, status: '' } : x)))
         // ensure the last message carries the final text
         if (streamed) {
           setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: streamed } : x)))
@@ -807,7 +1013,7 @@ export default function ModernChat({ onExit }) {
       }
       refreshSessions() // the new exchange becomes a visible recent chat
     } catch (e) {
-      setError(e?.message ? String(e.message) : String(e))
+      setError(friendlyError(e?.message ? String(e.message) : String(e)))
       // drop the empty streaming placeholder if nothing arrived
       setMessages((m) => (m.length > 1 && m[m.length - 1].role === 'brain' && !m[m.length - 1].text ? m.slice(0, -1) : m))
     } finally {
@@ -817,7 +1023,19 @@ export default function ModernChat({ onExit }) {
 
   const startNewChat = () => {
     if (busy) return
-    sessionRef.current = newSession(person)
+    if (activeClient) {
+      // new chat INSIDE the client's folder (fresh folder session id)
+      const who = person || 'web'
+      const slug = activeClient.id
+      sessionRef.current = `client/${slug}/${who}-${Math.random().toString(36).slice(2, 10)}`
+      try {
+        localStorage.setItem(`cb_session_id_client_${slug}_${who}`, sessionRef.current)
+      } catch {
+        /* ignore */
+      }
+    } else {
+      sessionRef.current = newSession(person)
+    }
     setMessages([WELCOME])
     setError(null)
   }
@@ -854,18 +1072,82 @@ export default function ModernChat({ onExit }) {
             <span className={`mc-conn ${connected ? 'on' : ''}`}>{connected ? 'online' : 'offline'}</span>
           </div>
           {agents.length === 0 && <div className="mc-side-empty">connecting…</div>}
-          {agents.map((a) => (
-            <div key={a.agent_id} className={`mc-agent ${a.state === 'working' ? 'busy' : ''}`}>
-              <AgentDot state={a.state || 'idle'} />
-              <span className="mc-agent-name">{shortName(a)}</span>
-              <span className="mc-agent-state">{a.state || 'idle'}</span>
-            </div>
+          {agents.length > 0 && (
+            <button className="mc-agents-folder" onClick={() => setShowAgents((v) => !v)}>
+              <span className="mc-folder-icon">🗂</span>
+              <span className="mc-agent-name">Agents</span>
+              <span className="mc-folder-count">{agents.length}</span>
+              <span className={`mc-folder-arrow ${showAgents ? 'open' : ''}`}>▸</span>
+            </button>
+          )}
+          {showAgents &&
+            agents.map((a) => (
+              <div key={a.agent_id} className={`mc-agent ${a.state === 'working' ? 'busy' : ''}`}>
+                <AgentDot state={a.state || 'idle'} />
+                <span className="mc-agent-name">{shortName(a)}</span>
+                <span className="mc-agent-state">{a.state || 'idle'}</span>
+              </div>
+            ))}
+        </div>
+
+        <div className="mc-side-clients">
+          <div className="mc-side-label">
+            clients
+            {activeClient && <span className="mc-client-active"> · {activeClient.name}</span>}
+          </div>
+          <button
+            className={`mc-client-row ${!activeClient ? 'sel' : ''}`}
+            onClick={() => selectClient(null)}
+            title="Chats that belong to no client"
+          >
+            <span className="mc-folder-icon">💬</span>
+            <span className="mc-agent-name">General</span>
+          </button>
+          {clients.map((c) => (
+            <button
+              key={c.id}
+              className={`mc-client-row ${activeClient?.id === c.id ? 'sel' : ''}`}
+              onClick={() => selectClient(c)}
+              title={`Open ${c.name}'s folder`}
+            >
+              <span className="mc-folder-icon">📁</span>
+              <span className="mc-agent-name">{c.name}</span>
+            </button>
           ))}
+          <button className="mc-client-new" onClick={() => setShowNewClient((v) => !v)} title="Start a folder for a new client">
+            <span className="mc-plus">＋</span> New client
+          </button>
+          {showNewClient && (
+            <form
+              className="mc-client-form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const name = newClientName.trim()
+                if (!name) return
+                createClient(name)
+                setNewClientName('')
+                setShowNewClient(false)
+              }}
+            >
+              <input
+                autoFocus
+                value={newClientName}
+                onChange={(e) => setNewClientName(e.target.value)}
+                placeholder="client name…"
+                maxLength={60}
+              />
+              <button type="submit">Create</button>
+            </form>
+          )}
         </div>
 
         <div className="mc-sessions">
           <div className="mc-side-label">
-            {person ? `${personObj?.display}'s chats` : 'recent chats'}
+            {activeClient
+              ? `${activeClient.name} · chats`
+              : person
+                ? `${personObj?.display}'s chats`
+                : 'recent chats'}
             {sessions.length > 0 && <span className="mc-sess-count">{sessions.length}</span>}
           </div>
           {sessions.length === 0 && <div className="mc-side-empty">no saved chats yet</div>}
@@ -905,7 +1187,7 @@ export default function ModernChat({ onExit }) {
             <span>Company Brain</span>
           </div>
           <div className="mc-header-sub">
-            coordinate-mode team · {agents.length} specialists
+            {activeClient ? `📁 ${activeClient.name}` : 'coordinate-mode team'} · {agents.length} specialists
           </div>
           <div className="mc-header-actions">
             {/* who is talking — /Sai-style slash names; agents tailor answers
@@ -1030,6 +1312,12 @@ export default function ModernChat({ onExit }) {
                   </div>
                   <div className="mc-brain-body">
                     <div className="mc-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }} />
+                    {m.status && !m.text && (
+                      <div className="mc-tool-status">
+                        <span className="mc-tool-dot" />
+                        {m.status}
+                      </div>
+                    )}
                     {i > 0 && m.text && <CopyButton text={m.text} />}
                   </div>
                 </div>
@@ -1196,9 +1484,11 @@ export default function ModernChat({ onExit }) {
               className="mc-input"
               rows={1}
               placeholder={
-                person
-                  ? `Message Company Brain as ${personObj?.display}… (/Bruhadish, /Sravani to switch)`
-                  : 'Message Company Brain — /Sai, /Bruhadish or /Sravani to say who you are…'
+                activeClient
+                  ? `Message ${activeClient.name}'s team — /Sai, /Bruhadish or /Sravani…`
+                  : person
+                    ? `Message Company Brain as ${personObj?.display}… (/Bruhadish, /Sravani to switch)`
+                    : 'Message Company Brain — /Sai, /Bruhadish or /Sravani to say who you are…'
               }
               value={input}
               onChange={(e) => {

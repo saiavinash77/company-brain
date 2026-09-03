@@ -1227,3 +1227,148 @@ html.mc-size-large .mc-root { font-size: 17.5px; }
     grid-template-columns: 1fr;
   }
 }
+
+/* live "what the team is doing" line — tool calls shown as friendly status */
+.mc-tool-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  margin-top: 2px;
+  border-radius: 999px;
+  background: rgba(100, 124, 248, 0.08);
+  border: 1px solid rgba(100, 124, 248, 0.22);
+  color: #4c5a86;
+  font-size: 13.5px;
+  animation: mc-fade-in 0.25s ease;
+}
+
+.mc-tool-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #647cf8;
+  animation: mc-bounce 1.2s ease-in-out infinite;
+}
+
+@keyframes mc-fade-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* collapsible "Agents" folder in the chat sidebar */
+.mc-agents-folder {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: #5d6a8f;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mc-agents-folder:hover { background: rgba(100, 124, 248, 0.07); }
+
+.mc-folder-icon { font-size: 14px; }
+
+.mc-folder-count {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(100, 124, 248, 0.14);
+  color: #647cf8;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mc-folder-arrow {
+  font-size: 10px;
+  color: #97a2c2;
+  transition: transform 0.18s ease;
+}
+
+.mc-folder-arrow.open { transform: rotate(90deg); }
+
+/* client folders section in the chat sidebar */
+.mc-side-clients {
+  padding: 10px 0 4px;
+  border-top: 1px solid rgba(29, 33, 48, 0.07);
+}
+
+.mc-client-active { color: #647cf8; font-weight: 600; }
+
+.mc-client-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: #5d6a8f;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mc-client-row:hover { background: rgba(100, 124, 248, 0.07); }
+.mc-client-row.sel { background: rgba(100, 124, 248, 0.13); color: #4457c9; }
+.mc-client-row.sel .mc-folder-icon { filter: saturate(1.4); }
+
+.mc-client-new {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px dashed rgba(100, 124, 248, 0.4);
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  color: #647cf8;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.mc-client-new:hover { background: rgba(100, 124, 248, 0.08); }
+.mc-client-new .mc-plus { font-size: 13px; line-height: 1; }
+
+.mc-client-form {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.mc-client-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid rgba(100, 124, 248, 0.35);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.mc-client-form input:focus { border-color: #647cf8; }
+
+.mc-client-form button {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: #647cf8;
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}

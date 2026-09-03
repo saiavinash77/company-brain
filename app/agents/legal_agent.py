@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.groq_model import get_groq_llama
+from app.models.groq_model import get_member_model
 
 
 LEGAL_AGENT_INSTRUCTIONS = [
@@ -58,7 +58,7 @@ def create_legal_agent() -> Agent:
     return Agent(
         name="Legal Agent",
         role="Review contracts, flag risks, and recommend protections — not legal advice",
-        model=get_groq_llama(),
+        model=get_member_model(),
         instructions=LEGAL_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         add_memories_to_context=True,

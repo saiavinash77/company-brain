@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.groq_model import get_groq_llama
+from app.models.groq_model import get_member_model
 
 
 STRATEGY_AGENT_INSTRUCTIONS = [
@@ -74,7 +74,7 @@ def create_strategy_agent() -> Agent:
     return Agent(
         name="Strategy Agent",
         role="Develops campaign strategies, growth plans, and content strategies based on research and ideas",
-        model=get_groq_llama(),
+        model=get_member_model(),
         instructions=STRATEGY_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         markdown=True,

@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.groq_model import get_groq_llama
+from app.models.groq_model import get_member_model
 
 
 MARKET_RESEARCH_AGENT_INSTRUCTIONS = [
@@ -63,7 +63,7 @@ def create_market_research_agent() -> Agent:
     return Agent(
         name="Market Research Agent",
         role="Researches competitors, market trends, and industry intelligence to inform decisions",
-        model=get_groq_llama(),
+        model=get_member_model(),
         instructions=MARKET_RESEARCH_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         markdown=True,

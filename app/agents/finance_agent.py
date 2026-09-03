@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.groq_model import get_groq_llama
+from app.models.groq_model import get_member_model
 
 
 FINANCE_AGENT_INSTRUCTIONS = [
@@ -54,7 +54,7 @@ def create_finance_agent() -> Agent:
     return Agent(
         name="Finance Agent",
         role="Track invoices, monitor payments, and provide cashflow summaries",
-        model=get_groq_llama(),
+        model=get_member_model(),
         instructions=FINANCE_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         add_memories_to_context=True,

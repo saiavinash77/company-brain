@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.groq_model import get_groq_llama
+from app.models.groq_model import get_member_model
 
 
 CLIENT_AGENT_INSTRUCTIONS = [
@@ -50,7 +50,7 @@ def create_client_agent(client_id: str, client_name: str) -> Agent:
     return Agent(
         name=f"Client Agent — {client_name}",
         role=f"Dedicated agent for {client_name}. Handles all client interactions, tracks projects, and maintains client history.",
-        model=get_groq_llama(),
+        model=get_member_model(),
         instructions=CLIENT_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         add_memories_to_context=True,

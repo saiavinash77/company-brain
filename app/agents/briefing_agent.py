@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.groq_model import get_groq_llama
+from app.models.groq_model import get_member_model
 
 
 BRIEFING_AGENT_INSTRUCTIONS = [
@@ -91,7 +91,7 @@ def create_briefing_agent() -> Agent:
     return Agent(
         name="Briefing Agent",
         role="Compiles daily and weekly briefings summarizing business status across all areas",
-        model=get_groq_llama(),
+        model=get_member_model(),
         instructions=BRIEFING_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         markdown=True,

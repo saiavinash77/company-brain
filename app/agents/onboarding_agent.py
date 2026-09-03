@@ -1,6 +1,6 @@
 from agno.agent import Agent
 
-from app.models.groq_model import get_groq_llama
+from app.models.groq_model import get_member_model
 
 ONBOARDING_STEPS = [
     "1. Kickoff meeting scheduled — confirm date/time with client",
@@ -51,7 +51,7 @@ def create_onboarding_agent() -> Agent:
     return Agent(
         name="Onboarding Agent",
         role="Manage new client onboarding: checklists, credential gathering, vault setup, and handoff to Client Agent",
-        model=get_groq_llama(),
+        model=get_member_model(),
         instructions=ONBOARDING_AGENT_INSTRUCTIONS,
         search_knowledge=True,
         add_memories_to_context=True,
