@@ -7,3 +7,8 @@ __pycache__
 data/
 *.db
 .DS_Store
+
+# faster + deterministic Cloud Build: ship the prebuilt frontend bundle
+# (npm run build runs locally in ~13s) instead of reinstalling node_modules
+office-floor-widget/node_modules
+deploy/
