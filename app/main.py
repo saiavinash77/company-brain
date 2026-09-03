@@ -680,10 +680,23 @@ def _mount_floor_ui(app) -> None:
 
         async def __call__(self, scope, receive, send):
             if scope["type"] == "http" and scope.get("path") == "/":
-                response = FileResponse(str(self.index_html))
+                if APP_PASSCODE and not self._authorized(scope):
+                    response = HTMLResponse(_GATE_PAGE.format(err=""), status_code=401)
+                else:
+                    response = FileResponse(str(self.index_html))
                 await response(scope, receive, send)
                 return
             await self.inner(scope, receive, send)
+
+        @staticmethod
+        def _authorized(scope) -> bool:
+            # Pure-ASGI scope, but Starlette's Request parses headers/cookies
+            # lazily from it — enough to reuse the exact HTTP-gate checks.
+            request = Request(scope)
+            if _cookie_ok(request):
+                return True
+            token = _auth0_token(request)
+            return bool(token) and _auth0_verify(token)
 
     app.add_middleware(LandingPageMiddleware, index_html=dist / "index.html")
 

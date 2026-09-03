@@ -46,6 +46,13 @@ function personSessionKey(person) {
   return person ? `cb_session_id_${person}` : 'cb_session_id'
 }
 
+// Agno auto-names sessions from the first message — which carries the
+// "[Sai is asking — Owner — …]" speaker tag we prepend for the agents.
+// Strip it so the sidebar shows the person's actual first words.
+function cleanSessionTitle(name) {
+  return (name || '').replace(/^\[[^\]]*\]\s*/, '')
+}
+
 function loadSessionId(person) {
   const key = personSessionKey(person)
   let sid = null
@@ -867,12 +874,12 @@ export default function ModernChat({ onExit }) {
               key={s.session_id}
               className={`mc-session ${s.session_id === sessionRef.current ? 'active' : ''}`}
               onClick={() => openSession(s.session_id)}
-              title={s.session_name || s.session_id}
+              title={cleanSessionTitle(s.session_name) || s.session_id}
             >
               <span className="mc-session-icon">✦</span>
               <span className="mc-session-body">
                 <span className="mc-session-name">
-                  {(s.session_name || s.session_id).slice(0, 60)}
+                  {(cleanSessionTitle(s.session_name) || s.session_id).slice(0, 60)}
                 </span>
                 <span className="mc-session-time">{timeAgo(s.updated_at || s.created_at)}</span>
               </span>
