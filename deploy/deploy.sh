@@ -20,7 +20,7 @@
 set -euo pipefail
 
 # ---- configuration -------------------------------------------------------
-PROJECT="${PROJECT:-company-brain-456712}"
+PROJECT="${PROJECT:-company-brain-live}"
 REGION="${REGION:-asia-south1}"          # Mumbai — closest to you
 APP_NAME="company-brain"
 DB_INSTANCE="company-brain-db"
@@ -46,7 +46,7 @@ if [[ "$BILLING" != "True" ]]; then
   cat <<'EOF'
 
 Billing is NOT active on this project. Open:
-  https://console.cloud.google.com/billing/linkedaccount?project=company-brain-456712
+  https://console.cloud.google.com/billing/linkedaccount?project=company-brain-live
 and link an ACTIVE billing account (reactivate the existing one or create
 a new one — new accounts get $300 free credit). Then re-run this script.
 
@@ -86,13 +86,14 @@ else
   gcloud sql instances create "$DB_INSTANCE" \
     --database-version="$DB_VERSION" \
     --tier="$DB_TIER_REAL" \
+    --edition=ENTERPRISE \
     --region="$REGION" \
     --project="$PROJECT" \
     --storage-auto-increase \
     --backup-start-time=03:00 \
     --enable-point-in-time-recovery \
-    --no-assign-public-ip \
-    --network=projects/"$PROJECT"/global/networks/default \
+    --no-assign-ip \
+    --network=projects/"$PROJECT"/global/networks/private-access \
     --quiet
   # ^ private IP only, on the default network; Cloud Run reaches it through
   #   the VPC connector created in step 5.
@@ -133,9 +134,11 @@ gcloud builds submit . \
 # ---- 4. app secrets ------------------------------------------------------
 say "Secret Manager: app keys + passcode"
 make_secret() { # name, env-var-from-.env
-  local name="$1" envvar="$2"
-  local val
-  val=$(grep -E "^${envvar}=" .env | head -1 | cut -d= -f2-)
+  local name="$1" envvar="$2" val line
+  # grep exits 1 when the var is absent — under `set -euo pipefail` that
+  # would silently kill the deploy; neutralize it and treat as "skip"
+  line=$(grep -E "^${envvar}=" .env | head -1 || true)
+  val="${line#*=}"
   [[ -n "$val" ]] || { echo "skip $name ($envvar not set in .env)"; return; }
   if gcloud secrets describe "$name" --project="$PROJECT" >/dev/null 2>&1; then
     printf '%s' "$val" | gcloud secrets versions add "$name" --data-file=- --project="$PROJECT"
@@ -177,7 +180,7 @@ say "Cloud Run deploy"
 if ! gcloud compute networks vpc-access connectors describe cb-connector --region="$REGION" --project="$PROJECT" >/dev/null 2>&1; then
   gcloud compute networks vpc-access connectors create cb-connector \
     --region="$REGION" --range=10.8.0.0/28 \
-    --network=default --project="$PROJECT" --quiet
+    --network=private-access --project="$PROJECT" --quiet
 fi
 
 # Assemble the secrets list dynamically: base secrets always, Serper/Auth0

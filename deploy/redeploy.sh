@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-PROJECT="${PROJECT:-company-brain-456712}"
+PROJECT="${PROJECT:-company-brain-live}"
 REGION="${REGION:-asia-south1}"
 APP_NAME="company-brain"
 AR_REPO="company-brain"

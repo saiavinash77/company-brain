@@ -264,7 +264,7 @@ def _person_from_request(request: Request) -> str | None:
 
 
 @webhook_app.get("/api/sessions/{person}")
-async def api_person_sessions(person: str, limit: int = 30):
+async def api_person_sessions(person: str, request: Request, limit: int = 30):
     """Recent team sessions belonging to one person's space.
 
     Runs are created with user_id=<person>, and AgentOS' session store
@@ -276,11 +276,19 @@ async def api_person_sessions(person: str, limit: int = 30):
     try:
         import httpx
 
-        base = f"http://127.0.0.1:{AGENTOS_PORT}"
+        # Forward cookies so the gate stays satisfied, and use the request's
+        # own host: on Cloud Run the public URL (not 127.0.0.1) is what
+        # reaches the AgentOS routes mounted in this same process. Force
+        # https behind Cloud Run's TLS terminator — its http listener would
+        # 302-redirect and httpx treats that redirect as an error.
+        base = str(request.base_url).rstrip("/")
+        if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
+            base = base.replace("http://", "https://", 1)
         async with httpx.AsyncClient(timeout=10) as client:
             res = await client.get(
                 f"{base}/sessions",
                 params={"limit": limit, "user_id": key, "session_type": "team"},
+                cookies=request.cookies,
             )
             res.raise_for_status()
             data = res.json()
