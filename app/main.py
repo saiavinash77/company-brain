@@ -395,19 +395,22 @@ async def api_extract_file(request: Request):
         return {"error": f"file too large (max {OCR_MAX_BYTES // (1024*1024)} MB)"}
 
     data = await upload.read()
-    mime = getattr(upload, "content_type", "") or ""
+    mime = getattr(upload, "content_type", "") or "application/octet-stream"
     name = getattr(upload, "filename", "") or "file"
-    kind = "image_url" if mime.startswith("image/") else "document_url"
     b64 = base64.b64encode(data).decode()
 
     import urllib.request
 
+    # Mistral OCR accepts ONE shape: document:{image_url|document_url} —
+    # both wrapped inside "document" (verified live; bare image_url keys
+    # are rejected with 422).
+    url_key = "image_url" if mime.startswith("image/") else "document_url"
     req = urllib.request.Request(
         "https://api.mistral.ai/v1/ocr",
         data=json.dumps(
             {
                 "model": "mistral-ocr-latest",
-                kind: f"data:{mime or 'application/octet-stream'};base64,{b64}",
+                "document": {url_key: f"data:{mime};base64,{b64}"},
             }
         ).encode(),
         headers={
