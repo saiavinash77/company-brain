@@ -488,13 +488,6 @@ function CopyButton({ text }) {
   )
 }
 
-const SUGGESTIONS = [
-  { icon: 'target', title: 'Qualify a lead', text: 'Qualify this lead and score it HOT/WARM/COLD: Acme Corp, 200-person logistics company, $5k/month budget, wants to start next month.' },
-  { icon: 'doc', title: 'Draft a pricing brief', text: 'Draft a one-page pricing brief for a mid-market logistics client with a $5k/month budget.' },
-  { icon: 'scan', title: 'Scan the market', text: 'Give me a quick scan of the logistics software market: top competitors and where we could differentiate.' },
-  { icon: 'send', title: 'Write a follow-up', text: 'Write a short friendly follow-up email to a client who went quiet after our pricing call.' },
-]
-
 // Short, human labels for the sidebar/chips ("Top Agent" reads better as
 // "Chief of Staff", "Market Research Agent" as "Market Research").
 const SHORT_NAME = {
@@ -518,11 +511,6 @@ function shortName(a) {
 // ---------------------------------------------------------------------------
 // The view
 // ---------------------------------------------------------------------------
-
-const WELCOME = {
-  role: 'brain',
-  text: "Hi, I'm your **Company Brain** — a Chief of Staff coordinating a team of specialists: sales, finance, legal, market research, strategy and more.\n\nAsk me anything, or start with a suggestion below.",
-}
 
 // ---------------------------------------------------------------------------
 // Reader settings — text size and font, remembered per browser.
@@ -555,7 +543,7 @@ function loadReaderPrefs() {
 
 export default function ModernChat({ onExit }) {
   const { connected, snapshot } = useAgentStatus()
-  const [messages, setMessages] = useState(() => [WELCOME])
+  const [messages, setMessages] = useState(() => [])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -625,7 +613,7 @@ export default function ModernChat({ onExit }) {
     }
     // swap to the folder's session space (each folder = its own session id)
     sessionRef.current = folderSessionId(person, client)
-    setMessages([WELCOME])
+    setMessages([])
     setError(null)
     setInput('')
     // load this folder's chats (or the person's general chats)
@@ -728,7 +716,7 @@ export default function ModernChat({ onExit }) {
     } catch {
       /* ignore */
     }
-    setMessages([WELCOME])
+    setMessages([])
     setError(null)
     setInput('')
   }
@@ -753,7 +741,7 @@ export default function ModernChat({ onExit }) {
     setMessages([]) // clear immediately so old text can't bleed into the new chat
     const msgs = await fetchSessionMessages(sid)
     setLoadingHistory(false)
-    setMessages(msgs && msgs.length > 0 ? msgs : [WELCOME])
+    setMessages(msgs && msgs.length > 0 ? msgs : [])
   }
 
   // ---- attachments ----
@@ -823,7 +811,7 @@ export default function ModernChat({ onExit }) {
           /* ignore */
         }
         sessionRef.current = loadSessionId(slash.id)
-        setMessages([WELCOME])
+        setMessages([])
       }
       typed = typed.replace(SLASH_CMD, '').trim()
     }
@@ -1030,7 +1018,7 @@ export default function ModernChat({ onExit }) {
     } else {
       sessionRef.current = newSession(person)
     }
-    setMessages([WELCOME])
+    setMessages([])
     setError(null)
   }
 
@@ -1329,16 +1317,8 @@ export default function ModernChat({ onExit }) {
                 </div>
               </div>
             )}
-            {messages.length === 1 && !busy && !loadingHistory && (
-              <div className="mc-suggest">
-                {SUGGESTIONS.map((s) => (
-                  <button key={s.title} className="mc-card" onClick={() => send(s.text)}>
-                    <span className="mc-card-icon"><Icon name={s.icon} size={18} /></span>
-                    <span className="mc-card-title">{s.title}</span>
-                    <span className="mc-card-text">{s.text}</span>
-                  </button>
-                ))}
-              </div>
+            {messages.length === 0 && !busy && !loadingHistory && (
+              <div className="mc-empty-hint">Type a message below to get started.</div>
             )}
           </div>
         </div>

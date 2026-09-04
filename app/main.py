@@ -371,11 +371,86 @@ async def api_person_sessions(person: str, request: Request, limit: int = 30):
 # PDFs and plain text are extracted client-side (pdfjs / FileReader) — fast
 # and free. Images (screenshots), DOCX and XLSX are NOT readable in the
 # browser, which is why the team used to answer "I can't extract that file".
-# This endpoint reads them server-side with Mistral OCR (works on images and
-# documents alike) and returns markdown text that rides inline in the message.
+# This endpoint reads them server-side and returns text that rides inline
+# in the message.
+#
+# PROVIDER ORDER (Google first, by design):
+# 1. Gemini on Vertex AI — OCR + visual understanding in one call; auth via
+#    GCP service account (no API key; free-tier-friendly).
+# 2. Mistral OCR/vision — fallback if Vertex is unreachable.
 
 MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "")
 OCR_MAX_BYTES = 12 * 1024 * 1024  # 12 MB upload cap
+
+VERTEX_PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT", "company-brain-live")
+VERTEX_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "asia-south1")
+VERTEX_MODEL = os.environ.get("VERTEX_GEMINI_MODEL", "gemini-3.6-flash")
+_VERTEX_ENDPOINT = (
+    f"https://aiplatform.googleapis.com/v1/projects/{VERTEX_PROJECT}"
+    f"/locations/{VERTEX_LOCATION}/publishers/google/models/{VERTEX_MODEL}:generateContent"
+)
+
+_vertex_creds = None  # module-level cache, refreshed by google-auth on expiry
+
+
+def _vertex_token() -> str:
+    """Access token for Vertex AI. google-auth.default() finds the Cloud Run
+    service account via the metadata server in production and ADC locally."""
+    global _vertex_creds
+    try:
+        import google.auth
+        import google.auth.transport.requests
+
+        if _vertex_creds is None:
+            _vertex_creds, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+        if not _vertex_creds.valid:
+            _vertex_creds.refresh(google.auth.transport.requests.Request())
+        return _vertex_creds.token or ""
+    except Exception as e:
+        logger.info(f"Vertex AI credentials unavailable: {e}")
+        return ""
+
+
+def _vertex_payload(b64: str, mime: str, prompt: str) -> dict:
+    return {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": prompt}, {"inlineData": {"mimeType": mime, "data": b64}}],
+            }
+        ],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
+    }
+
+
+def _vertex_text(payload: dict) -> str:
+    parts = (
+        ((payload.get("candidates") or [{}])[0].get("content", {}) or {}).get("parts")
+        or []
+    )
+    return "".join(p.get("text", "") for p in parts).strip()
+
+
+def _gemini_read(b64: str, mime: str, prompt: str, timeout: int = 60) -> str:
+    """Send an image/PDF to Gemini on Vertex AI; returns its text or raises."""
+    import urllib.request
+
+    token = _vertex_token()
+    if not token:
+        raise RuntimeError("no Vertex credentials")
+    req = urllib.request.Request(
+        _VERTEX_ENDPOINT,
+        data=json.dumps(_vertex_payload(b64, mime, prompt)).encode(),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return _vertex_text(json.loads(r.read()))
 
 
 @webhook_app.post("/api/extract-file")
@@ -383,10 +458,8 @@ async def api_extract_file(request: Request):
     """Extract text from a file the browser can't read (image/docx/xlsx/pdf).
 
     Multipart 'file' in, {"name", "text", "note"} out. Falls back gracefully:
-    when OCR is unavailable the caller gets a clear note instead of an error,
-    and the team is told the file exists but wasn't read."""
-    if not MISTRAL_API_KEY:
-        return {"error": "extraction unavailable (no OCR key configured)"}
+    when every provider fails the caller gets a clear note instead of an
+    error, and the team is told the file exists but wasn't read."""
     form = await request.form()
     upload = form.get("file")
     if upload is None or isinstance(upload, str):
@@ -399,11 +472,71 @@ async def api_extract_file(request: Request):
     name = getattr(upload, "filename", "") or "file"
     b64 = base64.b64encode(data).decode()
 
+    is_image = mime.startswith("image/")
+    is_pdf = "pdf" in mime
+
+    # ---- Google first: Gemini reads images AND PDFs (text + visuals) ----
+    text, note, description = "", "", ""
+    try:
+        if is_image:
+            prompt = (
+                "Extract ALL text visible in this image, exactly as written "
+                "(keep layout as plain text). Then on a new line starting with "
+                "'[What the image shows]', describe in 2-3 short factual "
+                "sentences what the image shows (charts, people, logos, scene) "
+                "for someone who cannot see it."
+            )
+        else:
+            prompt = (
+                "Extract ALL text content from this document, preserving "
+                "headings and structure as plain text. Tables become one row "
+                "per line with ' | ' between cells."
+            )
+        g_out = await asyncio.to_thread(_gemini_read, b64, mime, prompt)
+        if g_out:
+            text = g_out
+            if is_image and "[What the image shows]" in g_out:
+                body, _, desc = g_out.partition("[What the image shows]")
+                text = body.strip()
+                description = desc.strip()
+                note = "Google OCR (Gemini)"
+            else:
+                note = "Google OCR (Gemini)"
+    except Exception as e:
+        logger.info(f"Gemini extraction failed for {name}: {e}")
+
+    # ---- Fallback: Mistral OCR (+ vision for images) ---------------------
+    if not text and MISTRAL_API_KEY:
+        try:
+            m_text, m_pages = await _mistral_ocr(b64, mime)
+            if m_text:
+                text = m_text
+                note = f"OCR, {m_pages} page(s)"
+        except Exception as e:
+            logger.warning(f"Mistral OCR failed for {name}: {e}")
+
+    if is_image and not description:
+        description = await _describe_image(b64, mime)
+        if description:
+            note = note or "image, described"
+
+    if not text and description:
+        text = description
+    elif text and description:
+        text = f"{text}\n\n[What the image shows] {description}"
+
+    if not text:
+        return {"error": "could not read this file"}
+
+    return {"name": name, "text": text[:60000], "note": note, "description": description}
+
+
+async def _mistral_ocr(b64: str, mime: str) -> tuple[str, int]:
+    """Mistral OCR accepts ONE shape: document:{image_url|document_url} —
+    both wrapped inside "document" (verified live; bare image_url keys
+    are rejected with 422). Text lives in pages[].markdown."""
     import urllib.request
 
-    # Mistral OCR accepts ONE shape: document:{image_url|document_url} —
-    # both wrapped inside "document" (verified live; bare image_url keys
-    # are rejected with 422).
     url_key = "image_url" if mime.startswith("image/") else "document_url"
     req = urllib.request.Request(
         "https://api.mistral.ai/v1/ocr",
@@ -419,39 +552,40 @@ async def api_extract_file(request: Request):
         },
         method="POST",
     )
-    try:
+
+    def _call():
         with urllib.request.urlopen(req, timeout=60) as r:
-            payload = json.loads(r.read())
-    except Exception as e:
-        logger.warning(f"OCR extraction failed for {name}: {e}")
-        return {"error": "could not read this file"}
+            return json.loads(r.read())
 
+    payload = await asyncio.to_thread(_call)
     pages = payload.get("pages", [])
-    text = "\n\n".join((p.get("markdown") or "") for p in pages).strip()
-    note = f"OCR, {len(pages)} page(s)"
-
-    # Images: OCR alone misses visual content (photos, charts, logos). A
-    # short vision description completes the picture, so a poster or flyer
-    # is genuinely "seen" — no more "I can't read this image" replies.
-    description = ""
-    if mime.startswith("image/"):
-        description = await _describe_image(b64, mime)
-        if description:
-            note = f"image, described ({len(pages)} page OCR)"
-
-    if not text and description:
-        text = description
-    elif text and description:
-        text = f"{text}\n\n[What the image shows] {description}"
-
-    return {"name": name, "text": text[:60000], "note": note, "description": description}
+    return "\n\n".join((p.get("markdown") or "") for p in pages).strip(), len(pages)
 
 
 async def _describe_image(b64: str, mime: str) -> str:
-    """One-sentence visual description of an image via Mistral vision.
-    Called after OCR so charts/photos/diagrams are understood too.
-    Tries the cheap fast model first, falls back to the stronger one —
-    both accept the same multimodal chat shape (verified live)."""
+    """One-paragraph visual description of an image.
+    Google first: Gemini on Vertex AI (best quality, GCP-authenticated);
+    Mistral vision as fallback. Both accept base64 inline images."""
+    # ---- Google: Gemini vision ------------------------------------------
+    try:
+        desc = await asyncio.to_thread(
+            _gemini_read,
+            b64,
+            mime,
+            (
+                "Describe this image in 2-3 short factual sentences for "
+                "someone who cannot see it: what it shows, any notable "
+                "text, numbers, charts, people, places or logos."
+            ),
+        )
+        if desc:
+            return desc[:800]
+    except Exception as e:
+        logger.info(f"Gemini image description failed: {e}")
+
+    # ---- Fallback: Mistral vision ----------------------------------------
+    if not MISTRAL_API_KEY:
+        return ""
     import time as _time
     import urllib.request
 
