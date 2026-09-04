@@ -770,13 +770,13 @@ async def settings_status():
         return bool(v and v.strip())
 
     keys = {
-        "GOOGLE_API_KEY": {"set": _set(GOOGLE_API_KEY), "label": "Google Gemini (required)"},
+        "GOOGLE_API_KEY": {"set": _set(GOOGLE_API_KEY), "label": "Google Gemini API key (optional — Vertex AI service account covers Gemini OCR/vision/embeddings)"},
         "GROQ_API_KEY": {"set": _set(GROQ_API_KEY), "label": "Groq — powers all agents (fast inference)"},
-        "MISTRAL_API_KEY": {"set": _set(MISTRAL_API_KEY), "label": "Mistral (currently unused — agents moved to Groq)"},
+        "MISTRAL_API_KEY": {"set": _set(MISTRAL_API_KEY), "label": "Mistral — OCR/vision fallback"},
         "TWILIO_ACCOUNT_SID": {"set": _set(TWILIO_ACCOUNT_SID), "label": "Twilio WhatsApp"},
         "GMAIL_CLIENT_ID": {"set": _set(GMAIL_CLIENT_ID), "label": "Gmail tools"},
     }
-    missing_required = not _set(GOOGLE_API_KEY)
+    missing_required = not _set(GROQ_API_KEY)
     return {
         "keys": keys,
         "missing_required": missing_required,
@@ -951,12 +951,18 @@ def serve():
 
     # Build knowledge base (uses PgVector for semantic search).
     # PgVector defaults to OpenAIEmbedder, which needs OPENAI_API_KEY we
-    # don't have — point it at Gemini's embedding model instead.
+    # don't have. GeminiEmbedder's default (generativelanguage API) needs
+    # GOOGLE_API_KEY — also invalid here. Vertex AI mode authenticates via
+    # the service account (same as Gemini OCR) and needs no key at all.
     knowledge = Knowledge(
         vector_db=PgVector(
             table_name="company_brain_knowledge",
             db_url=db_url,
-            embedder=GeminiEmbedder(),
+            embedder=GeminiEmbedder(
+                vertexai=True,
+                project_id=os.environ.get("GOOGLE_CLOUD_PROJECT", "company-brain-live"),
+                location=os.environ.get("GOOGLE_CLOUD_LOCATION", "asia-south1"),
+            ),
         ),
     )
 
