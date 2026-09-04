@@ -428,11 +428,124 @@ async def api_extract_file(request: Request):
 
     pages = payload.get("pages", [])
     text = "\n\n".join((p.get("markdown") or "") for p in pages).strip()
-    if not text:
-        # scanned image with no detectable text, empty doc, etc.
-        text = ""
     note = f"OCR, {len(pages)} page(s)"
-    return {"name": name, "text": text[:60000], "note": note}
+
+    # Images: OCR alone misses visual content (photos, charts, logos). A
+    # short vision description completes the picture, so a poster or flyer
+    # is genuinely "seen" — no more "I can't read this image" replies.
+    description = ""
+    if mime.startswith("image/"):
+        description = await _describe_image(b64, mime)
+        if description:
+            note = f"image, described ({len(pages)} page OCR)"
+
+    if not text and description:
+        text = description
+    elif text and description:
+        text = f"{text}\n\n[What the image shows] {description}"
+
+    return {"name": name, "text": text[:60000], "note": note, "description": description}
+
+
+async def _describe_image(b64: str, mime: str) -> str:
+    """One-sentence visual description of an image via Mistral vision.
+    Called after OCR so charts/photos/diagrams are understood too."""
+    import urllib.request
+
+    req = urllib.request.Request(
+        "https://api.mistral.ai/v1/chat/completions",
+        data=json.dumps(
+            {
+                "model": "mistral-medium-latest",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Describe this image in 2-3 short factual sentences for "
+                                    "someone who cannot see it: what it shows, any notable "
+                                    "text, numbers, charts, people, places or logos."
+                                ),
+                            },
+                            {"type": "image_url", "image_url": f"data:{mime};base64,{b64}"},
+                        ],
+                    }
+                ],
+                "max_tokens": 160,
+                "temperature": 0.2,
+            }
+        ).encode(),
+        headers={
+            "Authorization": f"Bearer {MISTRAL_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as r:
+            d = json.loads(r.read())
+        content = (d.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        return content.strip()[:800]
+    except Exception as e:
+        logger.warning(f"image description failed: {e}")
+        return ""
+
+
+# ---- Link reading (pasted URLs) --------------------------------------------
+# "Here's the article: https://…" used to dead-end: the team had no way to
+# open it. The widget scrapes pasted links through this endpoint and the
+# page text rides inline in the message, same as file attachments.
+
+FETCH_MAX_BYTES = 3 * 1024 * 1024  # don't pull more than 3 MB of a page
+FETCH_MAX_CHARS = 12000            # what rides inline with the message
+
+
+@webhook_app.post("/api/fetch-link")
+async def api_fetch_link(request: Request):
+    """Read a web page's text: {"url": "https://…"} → {"title", "text"}."""
+    import re
+    import urllib.request
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    url = str(body.get("url", "")).strip()
+    if not re.match(r"^https?://", url):
+        return {"error": "invalid url"}
+
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0 (CompanyBrainBot/1.0)"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            if (r.headers.get("Content-Type") or "").startswith("image/"):
+                # image link — run it through OCR + vision like an attachment
+                data = r.read(OCR_MAX_BYTES)
+                b64 = base64.b64encode(data).decode()
+                mime = r.headers.get("Content-Type") or "image/png"
+                desc = await _describe_image(b64, mime)
+                return {"title": url, "text": f"[Image at link]\n{desc}", "kind": "image"}
+            html = r.read(FETCH_MAX_BYTES).decode("utf-8", "ignore")
+    except Exception as e:
+        logger.warning(f"link fetch failed for {url}: {e}")
+        return {"error": "could not open this link"}
+
+    # strip to readable text: scripts/styles out, tags out, whitespace squeezed
+    title_m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    title = (title_m.group(1).strip() if title_m else url)[:200]
+    text = re.sub(r"<(script|style|noscript)[\s\S]*?</\1>", " ", html, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    import html as html_mod
+
+    text = html_mod.unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n+", "\n", text).strip()
+    if len(text) > FETCH_MAX_CHARS:
+        text = text[:FETCH_MAX_CHARS] + "\n\n[page truncated — long article]"
+    return {"title": title, "text": text, "kind": "page"}
 
 
 # ---- Office-floor live status (Task: Agent Activity Floor) ----

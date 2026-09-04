@@ -1372,3 +1372,10 @@ html.mc-size-large .mc-root { font-size: 17.5px; }
   font-weight: 600;
   cursor: pointer;
 }
+
+/* shared inline icon (svg) alignment */
+.mc-icon {
+  display: inline-block;
+  vertical-align: -2px;
+  flex-shrink: 0;
+}

@@ -208,6 +208,7 @@ function timeAgo(iso) {
 
 const PDF_PAGE_CAP = 40
 const TEXT_CHAR_CAP = 60000
+const LINK_CHAR_CAP = 12000
 
 const TEXT_EXT = [
   '.txt', '.md', '.markdown', '.csv', '.tsv', '.json', '.yml', '.yaml',
@@ -262,7 +263,8 @@ async function extractFileText(file) {
 }
 
 // Server-side extraction (images / office docs / scanned PDFs) — POST the
-// raw file to /api/extract-file, get OCR'd markdown text back.
+// raw file to /api/extract-file, get OCR text (+ visual description for
+// images) back.
 async function extractServerSide(file) {
   try {
     const body = new FormData()
@@ -272,6 +274,26 @@ async function extractServerSide(file) {
     const d = await res.json()
     if (d && typeof d.text === 'string') {
       return { name: d.name || file.name, text: d.text.slice(0, TEXT_CHAR_CAP), note: d.note || 'OCR' }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+// Read a web page the user pasted, server-side: page text (or image
+// description) rides inline so the agents actually see the link's content.
+async function fetchLinkText(url) {
+  try {
+    const res = await fetch('/api/fetch-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    })
+    if (!res.ok) return null
+    const d = await res.json()
+    if (d && typeof d.text === 'string' && d.text) {
+      return { title: d.title || url, text: d.text.slice(0, LINK_CHAR_CAP) }
     }
     return null
   } catch {
@@ -392,6 +414,41 @@ export function renderMarkdown(md) {
 // Small pieces
 // ---------------------------------------------------------------------------
 
+// Professional inline icon set — stroke-based, inherits the text color.
+function Icon({ name, size = 16 }) {
+  const paths = {
+    // sidebar + folders
+    agents: <><rect x="3" y="7" width="18" height="13" rx="2" /><path d="M3 7l2-4h6l2 4" /></>,
+    chat: <path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z" />,
+    folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+    plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
+    // suggestion cards
+    target: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1" /></>,
+    doc: <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6" /></>,
+    scan: <><path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" /><path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" /><circle cx="12" cy="12" r="3" /></>,
+    send: <><path d="M22 2L11 13" /><path d="M22 2l-7 20-4-9-9-4z" /></>,
+    // misc
+    menu: <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>,
+    attach: <path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.9-7.8" />,
+  }
+  return (
+    <svg
+      className="mc-icon"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {paths[name] || paths.chat}
+    </svg>
+  )
+}
+
 function BrainMark({ size = 28 }) {
   // The user's Company Brain logo — white tile, periwinkle mark.
   return (
@@ -432,10 +489,10 @@ function CopyButton({ text }) {
 }
 
 const SUGGESTIONS = [
-  { icon: '◎', title: 'Qualify a lead', text: 'Qualify this lead and score it HOT/WARM/COLD: Acme Corp, 200-person logistics company, $5k/month budget, wants to start next month.' },
-  { icon: '⇗', title: 'Draft a pricing brief', text: 'Draft a one-page pricing brief for a mid-market logistics client with a $5k/month budget.' },
-  { icon: '⊬', title: 'Scan the market', text: 'Give me a quick scan of the logistics software market: top competitors and where we could differentiate.' },
-  { icon: '✎', title: 'Write a follow-up', text: 'Write a short friendly follow-up email to a client who went quiet after our pricing call.' },
+  { icon: 'target', title: 'Qualify a lead', text: 'Qualify this lead and score it HOT/WARM/COLD: Acme Corp, 200-person logistics company, $5k/month budget, wants to start next month.' },
+  { icon: 'doc', title: 'Draft a pricing brief', text: 'Draft a one-page pricing brief for a mid-market logistics client with a $5k/month budget.' },
+  { icon: 'scan', title: 'Scan the market', text: 'Give me a quick scan of the logistics software market: top competitors and where we could differentiate.' },
+  { icon: 'send', title: 'Write a follow-up', text: 'Write a short friendly follow-up email to a client who went quiet after our pricing call.' },
 ]
 
 // Short, human labels for the sidebar/chips ("Top Agent" reads better as
@@ -465,68 +522,6 @@ function shortName(a) {
 const WELCOME = {
   role: 'brain',
   text: "Hi, I'm your **Company Brain** — a Chief of Staff coordinating a team of specialists: sales, finance, legal, market research, strategy and more.\n\nAsk me anything, or start with a suggestion below.",
-}
-
-// ---------------------------------------------------------------------------
-// Live briefing — what fills the empty new-chat screen:
-//   1. real recent tech news (Hacker News front page, no API key needed)
-//   2. the latest exchanges from your own Company Brain conversations
-// The welcome text stays (it explains the product); the briefing rides below.
-// ---------------------------------------------------------------------------
-
-async function fetchTechNews(limit = 5) {
-  try {
-    const res = await fetch('https://hacker-news.firebaseio.com/v0/topstories.json')
-    if (!res.ok) return []
-    const ids = await res.json()
-    const picks = (ids || []).slice(0, 12)
-    const items = await Promise.all(
-      picks.map((id) =>
-        fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`)
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null),
-      ),
-    )
-    return items
-      .filter((it) => it && !it.dead && !it.deleted && it.title)
-      .slice(0, limit)
-      .map((it) => ({
-        title: it.title,
-        url: it.url || `https://news.ycombinator.com/item?id=${it.id}`,
-        points: it.score || 0,
-        ago: timeAgo(new Date((it.time || 0) * 1000).toISOString()),
-      }))
-  } catch {
-    return []
-  }
-}
-
-// Latest things said in Company Brain sessions — the user's own client work.
-// Returns false when there is genuinely no conversation to show.
-async function fetchRecentConversation(sessions) {
-  try {
-    const withRuns = await Promise.all(
-      sessions.slice(0, 4).map(async (s) => {
-        const msgs = await fetchSessionMessages(s.session_id)
-        return msgs && msgs.length > 0 ? { session: s, msgs } : null
-      }),
-    )
-    // the newest chat that actually has messages
-    for (const c of withRuns) {
-      if (!c) continue
-      const lastUser = [...c.msgs].reverse().find((m) => m.role === 'user')
-      const lastBrain = [...c.msgs].reverse().find((m) => m.role === 'brain')
-      if (!lastUser && !lastBrain) continue
-      return {
-        ago: timeAgo(c.session.updated_at || c.session.created_at),
-        asked: lastUser ? lastUser.text : '',
-        answered: lastBrain ? lastBrain.text.slice(0, 400) : '',
-      }
-    }
-    return false
-  } catch {
-    return false
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -569,8 +564,6 @@ export default function ModernChat({ onExit }) {
   const [attachments, setAttachments] = useState([]) // {id, file, note, text, error}
   const [dragging, setDragging] = useState(false)
   const [extracting, setExtracting] = useState(false)
-  const [news, setNews] = useState(null) // null = loading, [] = unavailable
-  const [recap, setRecap] = useState(null) // latest own conversation, same rules
   const [showSettings, setShowSettings] = useState(false)
   const [showPeople, setShowPeople] = useState(false)
   const [showAgents, setShowAgents] = useState(false)
@@ -692,18 +685,7 @@ export default function ModernChat({ onExit }) {
     root.classList.add(size.cls)
   }, [prefs])
 
-  // live briefing for the welcome screen — news + the latest own conversation
-  useEffect(() => {
-    let alive = true
-    fetchTechNews(5).then((items) => alive && setNews(items))
-    fetchSessions(person).then((list) => {
-      if (!alive) return
-      fetchRecentConversation(list).then((r) => alive && setRecap(r))
-    })
-    return () => {
-      alive = false
-    }
-  }, [person])
+  // (welcome-screen news/recap briefing removed — a clean, focused start)
 
   const agents = snapshot?.agents || []
   const personObj = person ? people.find((p) => p.id === person) : null
@@ -847,10 +829,22 @@ export default function ModernChat({ onExit }) {
     }
     const speaker = slash ? slash.id : person
     if (!typed && attachments.length === 0) return
+    // Links pasted in the message: fetch their content server-side so the
+    // agents read the page instead of dead-ending at "I can't open links".
+    const urls = [...new Set((typed.match(/https?:\/\/[^\s)>\]]+/g) || []))]
+      .slice(0, 3) // cap: 3 links per message keeps runs bounded
+    const linkParts = []
+    if (urls.length > 0) {
+      const fetched = await Promise.all(urls.map((u) => fetchLinkText(u)))
+      fetched.forEach((res, i) => {
+        if (res) linkParts.push(`[Link: ${urls[i]} — "${res.title}"]\n"""\n${res.text}\n"""`)
+      })
+    }
     // Build the outgoing message: prompt + extracted file contents. The
     // attachments' text rides inline so the model can actually read them.
     const parts = []
     if (typed) parts.push(typed)
+    parts.push(...linkParts)
     for (const att of attachments) {
       if (att.error) {
         parts.push(`[Attached file: ${att.file.name} — ${att.error}]`)
@@ -1074,7 +1068,7 @@ export default function ModernChat({ onExit }) {
           {agents.length === 0 && <div className="mc-side-empty">connecting…</div>}
           {agents.length > 0 && (
             <button className="mc-agents-folder" onClick={() => setShowAgents((v) => !v)}>
-              <span className="mc-folder-icon">🗂</span>
+              <span className="mc-folder-icon"><Icon name="agents" size={15} /></span>
               <span className="mc-agent-name">Agents</span>
               <span className="mc-folder-count">{agents.length}</span>
               <span className={`mc-folder-arrow ${showAgents ? 'open' : ''}`}>▸</span>
@@ -1100,7 +1094,7 @@ export default function ModernChat({ onExit }) {
             onClick={() => selectClient(null)}
             title="Chats that belong to no client"
           >
-            <span className="mc-folder-icon">💬</span>
+            <span className="mc-folder-icon"><Icon name="chat" size={15} /></span>
             <span className="mc-agent-name">General</span>
           </button>
           {clients.map((c) => (
@@ -1110,12 +1104,12 @@ export default function ModernChat({ onExit }) {
               onClick={() => selectClient(c)}
               title={`Open ${c.name}'s folder`}
             >
-              <span className="mc-folder-icon">📁</span>
+              <span className="mc-folder-icon"><Icon name="folder" size={15} /></span>
               <span className="mc-agent-name">{c.name}</span>
             </button>
           ))}
           <button className="mc-client-new" onClick={() => setShowNewClient((v) => !v)} title="Start a folder for a new client">
-            <span className="mc-plus">＋</span> New client
+            <span className="mc-plus"><Icon name="plus" size={13} /></span> New client
           </button>
           {showNewClient && (
             <form
@@ -1158,7 +1152,7 @@ export default function ModernChat({ onExit }) {
               onClick={() => openSession(s.session_id)}
               title={cleanSessionTitle(s.session_name) || s.session_id}
             >
-              <span className="mc-session-icon">✦</span>
+              <span className="mc-session-icon"><Icon name="chat" size={13} /></span>
               <span className="mc-session-body">
                 <span className="mc-session-name">
                   {(cleanSessionTitle(s.session_name) || s.session_id).slice(0, 60)}
@@ -1180,14 +1174,14 @@ export default function ModernChat({ onExit }) {
       <main className="mc-main">
         <header className="mc-header">
           <button className="mc-back" onClick={onExit} title="Back to the office-floor workbench">
-            ☰
+            <Icon name="menu" size={18} />
           </button>
           <div className="mc-header-title">
             <BrainMark size={20} />
             <span>Company Brain</span>
           </div>
           <div className="mc-header-sub">
-            {activeClient ? `📁 ${activeClient.name}` : 'coordinate-mode team'} · {agents.length} specialists
+            {activeClient ? `${activeClient.name}` : 'coordinate-mode team'} · {agents.length} specialists
           </div>
           <div className="mc-header-actions">
             {/* who is talking — /Sai-style slash names; agents tailor answers
@@ -1297,7 +1291,7 @@ export default function ModernChat({ onExit }) {
                       <div className="mc-bubble-files">
                         {m.files.map((f) => (
                           <span key={f} className="mc-filetag" title={f}>
-                            📄 {f}
+                            <Icon name="doc" size={12} /> {f}
                           </span>
                         ))}
                       </div>
@@ -1336,66 +1330,15 @@ export default function ModernChat({ onExit }) {
               </div>
             )}
             {messages.length === 1 && !busy && !loadingHistory && (
-              <>
-                {/* live briefing — real tech news + own recent client work */}
-                <div className="mc-briefing">
-                  <div className="mc-brief-col">
-                    <div className="mc-brief-head">
-                      <span className="mc-brief-icon">⚡</span> what's happening in tech
-                    </div>
-                    {news === null && <div className="mc-brief-empty">fetching the latest news…</div>}
-                    {news !== null && news.length === 0 && (
-                      <div className="mc-brief-empty">news feed unavailable (offline?)</div>
-                    )}
-                    {news?.length > 0 && (
-                      <ul className="mc-news">
-                        {news.map((n) => (
-                          <li key={n.url}>
-                            <a href={n.url} target="_blank" rel="noreferrer">
-                              {n.title}
-                            </a>
-                            <span className="mc-news-meta">
-                              {n.points} points · {n.ago}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div className="mc-brief-col">
-                    <div className="mc-brief-head">
-                      <span className="mc-brief-icon">✦</span> your latest company-brain conversation
-                    </div>
-                    {recap === null && <div className="mc-brief-empty">checking your chats…</div>}
-                    {recap === false && <div className="mc-brief-empty">no conversations yet — say hi!</div>}
-                    {recap && (
-                      <div className="mc-recap">
-                        {recap.asked && (
-                          <div className="mc-recap-ask">
-                            <span>you asked</span> {recap.asked.slice(0, 160)}
-                          </div>
-                        )}
-                        {recap.answered && (
-                          <div className="mc-recap-answer">
-                            <span>brain replied</span> {recap.answered.slice(0, 220)}…
-                          </div>
-                        )}
-                        <div className="mc-recap-time">{recap.ago}</div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mc-suggest">
-                  {SUGGESTIONS.map((s) => (
-                    <button key={s.title} className="mc-card" onClick={() => send(s.text)}>
-                      <span className="mc-card-icon">{s.icon}</span>
-                      <span className="mc-card-title">{s.title}</span>
-                      <span className="mc-card-text">{s.text}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
+              <div className="mc-suggest">
+                {SUGGESTIONS.map((s) => (
+                  <button key={s.title} className="mc-card" onClick={() => send(s.text)}>
+                    <span className="mc-card-icon"><Icon name={s.icon} size={18} /></span>
+                    <span className="mc-card-title">{s.title}</span>
+                    <span className="mc-card-text">{s.text}</span>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -1433,7 +1376,7 @@ export default function ModernChat({ onExit }) {
             <div className="mc-attach-strip">
               {attachments.map((att) => (
                 <span key={att.id} className={`mc-attach ${att.error ? 'error' : ''}`} title={att.note}>
-                  <span className="mc-attach-icon">📄</span>
+                  <span className="mc-attach-icon"><Icon name="doc" size={13} /></span>
                   <span className="mc-attach-body">
                     <span className="mc-attach-name">{att.file.name}</span>
                     <span className="mc-attach-note">
@@ -1452,7 +1395,7 @@ export default function ModernChat({ onExit }) {
               ))}
             </div>
           )}
-          {error && <div className="mc-error">⚠ {error}</div>}
+          {error && <div className="mc-error">{error}</div>}
           <div className="mc-inputwrap">
             <input
               ref={fileInputRef}
@@ -1521,7 +1464,7 @@ export default function ModernChat({ onExit }) {
             </button>
           </div>
           <div className="mc-foot">
-            Attach PDFs, docs, code or data — drop, paste, or click 📎. Links pasted in the message work too.
+            Attach PDFs, docs, images or data — drop, paste, or click the clip. Links pasted in the message are read automatically.
           </div>
         </div>
       </main>
