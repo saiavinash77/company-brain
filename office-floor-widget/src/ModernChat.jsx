@@ -566,6 +566,8 @@ export default function ModernChat({ onExit }) {
   const sessionRef = useRef(null)
   const scrollRef = useRef(null)
   const taRef = useRef(null)
+  const abortRef = useRef(null) // AbortController for the in-flight run (Stop button)
+  const stoppedRef = useRef(false) // distinguishes user-stop from a real error
 
   // registry + last-used person, then the matching session id
   useEffect(() => {
@@ -853,6 +855,8 @@ export default function ModernChat({ onExit }) {
       { role: 'user', text: typed || '(sent attachments)', files: shownFiles },
     ])
     setBusy(true)
+    stoppedRef.current = false
+    abortRef.current = new AbortController()
     try {
       // stream=true: reply tokens arrive as SSE and render progressively.
       // The event payload shape is tolerant (content | delta | text fields,
@@ -862,7 +866,7 @@ export default function ModernChat({ onExit }) {
       body.append('stream', 'true')
       body.append('session_id', sessionRef.current)
       if (speaker) body.append('user_id', speaker) // who is asking → speaker tag + own session space
-      const res = await fetch(`/teams/${TEAM_ID}/runs`, { method: 'POST', body })
+      const res = await fetch(`/teams/${TEAM_ID}/runs`, { method: 'POST', body, signal: abortRef.current.signal })
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
       const ctype = res.headers.get('content-type') || ''
 
@@ -995,12 +999,30 @@ export default function ModernChat({ onExit }) {
       }
       refreshSessions() // the new exchange becomes a visible recent chat
     } catch (e) {
-      setError(friendlyError(e?.message ? String(e.message) : String(e)))
-      // drop the empty streaming placeholder if nothing arrived
-      setMessages((m) => (m.length > 1 && m[m.length - 1].role === 'brain' && !m[m.length - 1].text ? m.slice(0, -1) : m))
+      if (e?.name === 'AbortError' || stoppedRef.current) {
+        // user pressed Stop — keep whatever streamed in so far, mark it done
+        setMessages((m) =>
+          m.map((x, i) =>
+            i === m.length - 1 && x.role === 'brain'
+              ? { ...x, text: x.text || '*(stopped before any reply arrived)*', status: '' }
+              : x,
+          ),
+        )
+      } else {
+        setError(friendlyError(e?.message ? String(e.message) : String(e)))
+        // drop the empty streaming placeholder if nothing arrived
+        setMessages((m) => (m.length > 1 && m[m.length - 1].role === 'brain' && !m[m.length - 1].text ? m.slice(0, -1) : m))
+      }
     } finally {
+      stoppedRef.current = false
+      abortRef.current = null
       setBusy(false)
     }
+  }
+
+  const stop = () => {
+    stoppedRef.current = true
+    abortRef.current?.abort()
   }
 
   const startNewChat = () => {
@@ -1432,16 +1454,24 @@ export default function ModernChat({ onExit }) {
                 }
               }}
             />
-            <button
-              className={`mc-send ${busy || (!input.trim() && attachments.length === 0) ? 'disabled' : ''}`}
-              onClick={() => send()}
-              disabled={busy || (!input.trim() && attachments.length === 0)}
-              title="Send"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <path d="M12 19V5m0 0l-6 6m6-6l6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
+            {busy ? (
+              <button className="mc-send mc-stop" onClick={stop} title="Stop generating">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                className={`mc-send ${!input.trim() && attachments.length === 0 ? 'disabled' : ''}`}
+                onClick={() => send()}
+                disabled={!input.trim() && attachments.length === 0}
+                title="Send"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 19V5m0 0l-6 6m6-6l6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
           </div>
           <div className="mc-foot">
             Attach PDFs, docs, images or data — drop, paste, or click the clip. Links pasted in the message are read automatically.

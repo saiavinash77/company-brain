@@ -1,17 +1,24 @@
-"""LLM workhorse helpers — Groq powers every agent (~1s latency), with
-Gemini on Vertex AI and OpenRouter as fallbacks.
+"""LLM workhorse helpers — Gemini on Vertex AI powers every agent.
 
-GROQ ROLE MAP (critical): Agno's OpenAIChat maps system messages to the
-"developer" role by default (a newer OpenAI convention). Groq's server-side
-minijinja template only accepts "system" on many models — sending "developer"
-returns HTTP 400 "Unexpected message role", which kills every delegated
-member-agent run (the team model gpt-oss-120b tolerates it, members on qwen
-do not). The explicit role_map below keeps "system" as "system" everywhere.
+Why Gemini on Vertex (2026-09-04): Groq's free tier caps EVERY request at
+8000 tokens/minute per model, and the team's accumulated context (system
+prompts + team history + tool results) grows past that within a few turns —
+Groq then rejects the whole request ("Request too large … Requested 9322"),
+which no amount of retrying can fix. Gemini on Vertex authenticates via the
+Cloud Run service account (no API key), has no such per-request ceiling, and
+gemini-2.5-pro is a quality upgrade for the coordinator.
 
-FALLBACK ORDER per agent type:
-1. Groq (if GROQ_API_KEY)             — fastest
-2. Gemini on Vertex AI (on GCP)       — Google models, no key needed
-3. OpenRouter free (if OPENROUTER_API_KEY) — quota-free safety net
+Model map:
+- Team coordinator: gemini-2.5-pro  (best quality)
+- Member agents:    gemini-2.5-flash (fast, cheap, tool-capable)
+- OCR/vision:        gemini-3.6-flash via Vertex (app/main.py)
+- Fallbacks:         Groq (fast, if GROQ_API_KEY set) → OpenRouter free
+
+GROQ ROLE MAP (kept for the Groq fallback): Agno's OpenAIChat maps system
+messages to the "developer" role by default (an OpenAI convention). Groq's
+server-side minijinja template only accepts "system" on many models —
+sending "developer" returns HTTP 400 "Unexpected message role". The explicit
+role_map below keeps "system" as "system".
 """
 import os
 
@@ -36,12 +43,21 @@ GROQ_ROLE_MAP = {
 # Vertex AI config — on Cloud Run the service account authenticates itself,
 # no API key involved. Locally it needs GOOGLE_APPLICATION_CREDENTIALS or
 # `gcloud auth application-default login`.
+# LOCATION NOTE: "global" (not asia-south1) — the regional asia-south1
+# endpoint only serves a subset of Gemini models; the global endpoint serves
+# all of them, including gemini-2.5-pro (verified live with the Cloud Run
+# service account token).
 GCP_PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT", "company-brain-live")
-GCP_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "asia-south1")
-VERTEX_GEMINI_MODEL = os.environ.get("VERTEX_GEMINI_MODEL", "gemini-3.6-flash")
+GCP_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
+
+# Coordinator (team brain) gets the pro model for quality; member agents get
+# flash for speed and cost. Both verified live on Vertex asia-south1.
+VERTEX_TEAM_MODEL = os.environ.get("VERTEX_TEAM_MODEL", "gemini-2.5-pro")
+VERTEX_MEMBER_MODEL = os.environ.get("VERTEX_MEMBER_MODEL", "gemini-2.5-flash")
+VERTEX_OCR_MODEL = os.environ.get("VERTEX_GEMINI_MODEL", "gemini-3.6-flash")
 
 
-def _vertex_gemini(model_id: str = VERTEX_GEMINI_MODEL) -> Gemini:
+def _vertex_gemini(model_id: str) -> Gemini:
     return Gemini(
         id=model_id,
         vertexai=True,
@@ -55,11 +71,11 @@ def _vertex_available() -> bool:
     or the user has a Vertex-capable environment configured."""
     if os.environ.get("K_SERVICE"):  # set inside Cloud Run
         return True
-    return os.path.exists(
-        os.path.join(
-            os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
-        )
+    adc = os.path.join(
+        os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
     )
+    win_adc = os.path.expandvars(r"%APPDATA%\gcloud\application_default_credentials.json")
+    return os.path.exists(adc) or os.path.exists(win_adc)
 
 
 def _openrouter(model_id: str = OPENROUTER_DEFAULT_MODEL) -> OpenAIChat:
@@ -78,54 +94,54 @@ def get_openrouter(model_id: str = OPENROUTER_DEFAULT_MODEL) -> OpenAIChat:
 
 
 def get_groq_llama(model_id: str = "openai/gpt-oss-120b", max_retries: int = 10):
-    """Groq workhorse with fallback chain: Groq → Gemini (Vertex) → OpenRouter.
+    """Backwards-compatible alias: the team used to ask for "the Groq model"
+    by name. Gemini on Vertex is now the primary; Groq the fast fallback,
+    with the critical role_map fix (see module docstring)."""
+    return get_team_model()
 
-    max_retries is the OpenAI SDK's automatic-retry count for 429s — Groq's
-    free tier caps every model at ~8000 tokens/minute, and a 10-agent team
-    run easily needs 3+ minutes of calls. The SDK backs off exponentially
-    (seconds → minutes), so raising retries keeps a team run alive past the
-    rate-limit window instead of dying mid-handoff with a RunError."""
+
+# Model split for per-model quota headroom + cost control: the team
+# coordinator rides the pro model, member agents the flash model. Separate
+# model ids also keep their token budgets independent.
+def get_team_model():
+    """Model for the Team itself (the coordinator / Chief of Staff brain)."""
+    if _vertex_available():
+        return _vertex_gemini(VERTEX_TEAM_MODEL)
     if GROQ_API_KEY:
         return OpenAIChat(
-            id=model_id,
+            id="openai/gpt-oss-120b",
             api_key=GROQ_API_KEY,
             base_url="https://api.groq.com/openai/v1",
-            max_retries=max_retries,
+            max_retries=10,
             role_map=GROQ_ROLE_MAP,
         )
-    if _vertex_available():
-        return _vertex_gemini()
     if OPENROUTER_API_KEY:
         return _openrouter()
-    raise ValueError(
-        "No LLM key set (GROQ_API_KEY / Vertex AI / OPENROUTER_API_KEY)."
-    )
+    raise ValueError("No LLM available (Vertex AI / GROQ_API_KEY / OPENROUTER_API_KEY).")
 
 
-# Model split for rate-limit headroom: the team coordinator and the member
-# agents ride DIFFERENT Groq models, so their token budgets don't collide
-# (each model id gets its own 8000/min allowance on the free tier).
-# gpt-oss-120b stays the team brain (best quality); qwen3.8-27b is a solid
-# tool-using worker at a fraction of the token cost.
-TEAM_MODEL_ID = "openai/gpt-oss-120b"
-MEMBER_MODEL_ID = "qwen/qwen3.8-27b"
-
-
-def get_team_model() -> OpenAIChat:
-    """Model for the Team itself (the coordinator / Chief of Staff brain)."""
-    return get_groq_llama(TEAM_MODEL_ID)
-
-
-def get_member_model() -> OpenAIChat:
-    """Model for member agents (sales, finance, legal, …) — a separate model
-    id so a busy team run gets 2× the aggregate tokens-per-minute budget."""
-    return get_groq_llama(MEMBER_MODEL_ID)
+def get_member_model():
+    """Model for member agents (sales, finance, legal, …) — fast flash tier
+    so a 10-agent team run stays quick and cheap."""
+    if _vertex_available():
+        return _vertex_gemini(VERTEX_MEMBER_MODEL)
+    if GROQ_API_KEY:
+        return OpenAIChat(
+            id="qwen/qwen3.8-27b",
+            api_key=GROQ_API_KEY,
+            base_url="https://api.groq.com/openai/v1",
+            max_retries=10,
+            role_map=GROQ_ROLE_MAP,
+        )
+    if OPENROUTER_API_KEY:
+        return _openrouter()
+    raise ValueError("No LLM available (Vertex AI / GROQ_API_KEY / OPENROUTER_API_KEY).")
 
 
 def get_gemini_vertex() -> Gemini:
     """Google's Gemini via Vertex AI — used for OCR/vision and as a
     high-quality fallback. Authenticates via GCP credentials, no API key."""
-    return _vertex_gemini()
+    return _vertex_gemini(VERTEX_OCR_MODEL)
 
 
 def get_mistral_large(model_id: str = "mistral-large-latest"):
@@ -138,7 +154,7 @@ def get_mistral_large(model_id: str = "mistral-large-latest"):
     if OPENROUTER_API_KEY:
         return _openrouter()
     if _vertex_available():
-        return _vertex_gemini()
+        return _vertex_gemini(VERTEX_MEMBER_MODEL)
     raise ValueError(
         "No LLM key set (MISTRAL_API_KEY / OPENROUTER_API_KEY / Vertex AI)."
     )

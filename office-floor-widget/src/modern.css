@@ -1050,6 +1050,22 @@ html.mc-size-large .mc-root { font-size: 17.5px; }
   transform: none;
 }
 
+/* Stop button — replaces Send while a run is streaming */
+.mc-send.mc-stop {
+  background: #e5484d;
+  color: #ffffff;
+  animation: mc-stop-pulse 1.6s ease-in-out infinite;
+}
+
+.mc-send.mc-stop:hover {
+  background: #d63940;
+}
+
+@keyframes mc-stop-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(229, 72, 77, 0); }
+}
+
 .mc-foot {
   text-align: center;
   font-size: 11px;
