@@ -449,48 +449,54 @@ async def api_extract_file(request: Request):
 
 async def _describe_image(b64: str, mime: str) -> str:
     """One-sentence visual description of an image via Mistral vision.
-    Called after OCR so charts/photos/diagrams are understood too."""
+    Called after OCR so charts/photos/diagrams are understood too.
+    Tries the cheap fast model first, falls back to the stronger one —
+    both accept the same multimodal chat shape (verified live)."""
+    import time as _time
     import urllib.request
 
-    req = urllib.request.Request(
-        "https://api.mistral.ai/v1/chat/completions",
-        data=json.dumps(
-            {
-                "model": "mistral-medium-latest",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Describe this image in 2-3 short factual sentences for "
-                                    "someone who cannot see it: what it shows, any notable "
-                                    "text, numbers, charts, people, places or logos."
-                                ),
-                            },
-                            {"type": "image_url", "image_url": f"data:{mime};base64,{b64}"},
-                        ],
-                    }
-                ],
-                "max_tokens": 160,
-                "temperature": 0.2,
-            }
-        ).encode(),
-        headers={
-            "Authorization": f"Bearer {MISTRAL_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=45) as r:
-            d = json.loads(r.read())
-        content = (d.get("choices") or [{}])[0].get("message", {}).get("content", "")
-        return content.strip()[:800]
-    except Exception as e:
-        logger.warning(f"image description failed: {e}")
-        return ""
+    for model, timeout in (("ministral-8b-latest", 30), ("mistral-medium-latest", 45)):
+        req = urllib.request.Request(
+            "https://api.mistral.ai/v1/chat/completions",
+            data=json.dumps(
+                {
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "Describe this image in 2-3 short factual sentences for "
+                                        "someone who cannot see it: what it shows, any notable "
+                                        "text, numbers, charts, people, places or logos."
+                                    ),
+                                },
+                                {"type": "image_url", "image_url": f"data:{mime};base64,{b64}"},
+                            ],
+                        }
+                    ],
+                    "max_tokens": 160,
+                    "temperature": 0.2,
+                }
+            ).encode(),
+            headers={
+                "Authorization": f"Bearer {MISTRAL_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                d = json.loads(r.read())
+            content = (d.get("choices") or [{}])[0].get("message", {}).get("content", "")
+            if content.strip():
+                return content.strip()[:800]
+        except Exception as e:
+            logger.warning(f"image description failed on {model}: {e}")
+            _time.sleep(2)  # brief backoff before the fallback model
+    return ""
 
 
 # ---- Link reading (pasted URLs) --------------------------------------------
