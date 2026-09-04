@@ -879,9 +879,30 @@ export default function ModernChat({ onExit }) {
           let dispatch = () => {}
           // placeholder brain message; its text is updated as tokens arrive
           setMessages((m) => [...m, { role: 'brain', text: '' }])
+          // Typewriter smoother: some models (Gemini 2.5 Pro) emit large
+          // ~200-char server-side chunks instead of token-by-token. To make
+          // every reply FEEL streamed, incoming chunks go into a buffer and
+          // a ticker drains it at a steady readable pace. When the stream
+          // ends, the full text is set immediately by the completion event.
+          let shown = 0 // chars of `streamed` actually rendered
+          let drainTimer = null
+          const renderShown = () => {
+            setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: streamed.slice(0, shown) } : x)))
+          }
+          const drainTick = () => {
+            if (shown >= streamed.length) {
+              drainTimer = null
+              return
+            }
+            // ease out: fast while there's a big backlog, gentle at the tail
+            const backlog = streamed.length - shown
+            shown += backlog > 400 ? 28 : backlog > 120 ? 14 : 7
+            renderShown()
+            drainTimer = setTimeout(drainTick, 24)
+          }
           const updateLast = (chunk) => {
             streamed += chunk
-            setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: streamed } : x)))
+            if (drainTimer == null) drainTick()
           }
           const setBusyStatus = (label) => {
             if (label === toolStatus) return
@@ -940,6 +961,11 @@ export default function ModernChat({ onExit }) {
               const full = typeof d.content === 'string' ? d.content : ''
               if (full) {
                 streamed = full
+                shown = full.length // skip the typewriter — we have the whole answer
+                if (drainTimer != null) {
+                  clearTimeout(drainTimer)
+                  drainTimer = null
+                }
                 setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, text: full, status: '' } : x)))
               }
               return
@@ -969,6 +995,14 @@ export default function ModernChat({ onExit }) {
             }
           }
           if (buf.trim()) dispatch(buf)
+          // stream done: let any remaining typewriter buffer finish quickly,
+          // or jump to the end if we never saw a completion event
+          if (drainTimer == null && shown < streamed.length) drainTick()
+          const waitForDrain = () => new Promise((resolve) => {
+            const check = () => (drainTimer == null || shown >= streamed.length) ? resolve() : setTimeout(check, 40)
+            check()
+          })
+          if (shown < streamed.length) await waitForDrain()
           // clear the status chip once the stream ends
           setMessages((m) => m.map((x, i) => (i === m.length - 1 ? { ...x, status: '' } : x)))
         // ensure the last message carries the final text
@@ -1000,11 +1034,12 @@ export default function ModernChat({ onExit }) {
       refreshSessions() // the new exchange becomes a visible recent chat
     } catch (e) {
       if (e?.name === 'AbortError' || stoppedRef.current) {
-        // user pressed Stop — keep whatever streamed in so far, mark it done
+        // user pressed Stop — keep everything received so far, mark it done
+        const kept = streamed || ''
         setMessages((m) =>
           m.map((x, i) =>
             i === m.length - 1 && x.role === 'brain'
-              ? { ...x, text: x.text || '*(stopped before any reply arrived)*', status: '' }
+              ? { ...x, text: kept || '*(stopped before any reply arrived)*', status: '' }
               : x,
           ),
         )
